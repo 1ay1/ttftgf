@@ -1,0 +1,1687 @@
+% ============================================================
+%  Chapter 12 ---'' Concepts, Constraints, and Bounded Polymorphism
+%  "Type Theory from the Ground Up"
+% ============================================================
+\chapter{Concepts, Constraints, and Bounded Polymorphism}
+\label{ch:concepts-constraints}
+
+\begin{quote}
+\textit{``The question is not whether a function is polymorphic. The question is
+\emph{how polymorphic} it should be --- and how you tell the compiler what you
+mean.''}
+\end{quote}
+
+\noindent
+In the last chapter we met higher-kinded types: the idea that type constructors
+themselves can be abstracted over, giving us polymorphism that ranges not just
+over types but over \emph{type-level functions}. That is heady stuff. But it
+opens a question that has been quietly waiting in the wings ever since Chapter~6
+first introduced parametric polymorphism.
+
+When you write \code{template<typename T>} in C++, or \(\forall \alpha.\) in
+type theory, you are making a sweeping promise: this function works for
+\emph{any} type. But does it really? When you write:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+T add(T a, T b) {
+    return a + b;
+}
+\end{lstlisting}
+
+\noindent
+\ldots you are lying to the type system. This does not work for any type
+\typename{T}. It works only for types that support the \code{+} operator. If
+someone instantiates \code{add<std::vector<int>>}, the compiler will produce an
+error --- but that error will not say ``you used the wrong type''. It will
+instead bury you in an avalanche of template instantiation nonsense that
+mentions things you did not write and points to files you have never opened.
+
+This is the central problem we solve in this chapter: \emph{how do you
+constrain polymorphism?} How do you say, precisely and formally, ``this
+function is generic, but not infinitely generic --- T must satisfy certain
+conditions''?
+
+The answers come from three directions that ultimately converge:
+
+\begin{enumerate}
+  \item \textbf{Type theory} gives us \emph{bounded quantification} and
+        \emph{qualified types} --- the formal framework.
+  \item \textbf{Haskell} gives us \emph{type classes} --- an elegant,
+        predicate-based approach to constraint polymorphism.
+  \item \textbf{C++20} gives us \emph{concepts} --- a practical, expressive
+        mechanism for specifying and checking template requirements.
+\end{enumerate}
+
+All three are solving the same fundamental problem. By the end of this chapter,
+you will see them as facets of a single underlying idea, expressed in different
+syntactic clothing.
+
+
+% ============================================================
+\section{The Problem with Unconstrained Polymorphism}
+\label{sec:unconstrained-polymorphism}
+% ============================================================
+
+Let us start by really dwelling on the problem, because the pain is the
+motivation for everything that follows.
+
+Here is the situation in pre-C++20 template code. You write a generic function
+and you \emph{know} it has requirements, but you cannot express them. All you
+can do is hope the user reads the documentation.
+
+\begin{lstlisting}[style=cpp]
+// This template "works" for any T -- but only if T has operator+.
+// There is no way to say that in the type signature.
+// The constraint lives only in a comment, invisible to the compiler.
+template<typename T>
+T add(T a, T b) {
+    return a + b;  // This line will fail to compile for many T
+}
+
+struct Foo { int x; };  // No operator+
+
+int main() {
+    int   result1 = add(3, 4);          // Fine.
+    float result2 = add(1.5f, 2.5f);    // Fine.
+    Foo   result3 = add(Foo{1}, Foo{2}); // Compiles add(). Error here!
+}
+\end{lstlisting}
+
+Now, when you compile the last line, you do not get a clean error like:
+\begin{quote}
+\texttt{error: type 'Foo' does not support operator+}
+\end{quote}
+
+Instead, on a typical compiler, you get something approximately like the
+following nightmare. This is a real-world example of the kind of output GCC
+produces when a template is instantiated with the wrong type:
+
+\begin{lstlisting}[style=pseudocode]
+In instantiation of 'T add(T, T) [with T = Foo]':
+  required from here
+error: no match for 'operator+' (operand types are 'Foo' and 'Foo')
+    return a + b;
+           ~~^~~
+note: candidate: 'operator+(int, int)'
+  ...
+note: no known conversion for argument 1 from 'Foo' to 'int'
+  ...
+note: candidate: 'operator+(float, float)'
+  ...
+note: no known conversion for argument 1 from 'Foo' to 'float'
+  ... [dozens more lines] ...
+\end{lstlisting}
+
+The error points \emph{inside} the template body --- inside code you did not
+write (or at least did not intend to debug). If this were a deeply nested
+template from a third-party library, the error backtrace could be twenty levels
+deep, pointing through headers you have never seen. This is the famous
+``template error message problem'' that plagued C++ for decades.
+
+\begin{warning}[The Core Failure: No Interface, No Contract]
+The root cause is simple: there is no way in pre-C++20 C++ to say ``this
+template requires T to have operator+''. The function's \emph{type signature}
+does not express its \emph{requirements}. So the compiler can only complain
+when it actually tries to generate code and fails. The error is caught at the
+wrong level of abstraction --- inside the implementation, not at the call site.
+
+This is exactly like a function that accepts a \code{void*} and casts it
+internally: you lose all static information at the boundary.
+\end{warning}
+
+The deeper issue here is philosophical. When we say a function is polymorphic,
+we mean it is abstracted over types. But abstraction is supposed to come with a
+\emph{contract}. A proper contract says both what the function promises to do,
+and what it requires from its inputs. A template with no constraint is a
+function with half a contract.
+
+\begin{keyinsight}[The Missing Half of the Polymorphism Contract]
+Parametric polymorphism gives you functions that work for many types. But for
+most interesting functions, they do not work for \emph{all} types --- only for
+types that satisfy certain properties. \emph{Expressing} those properties in
+the type system, rather than burying them in documentation, is the problem of
+\textbf{constrained polymorphism}.
+\end{keyinsight}
+
+
+% ============================================================
+\section{Bounded Polymorphism in Type Theory}
+\label{sec:bounded-polymorphism}
+% ============================================================
+
+Type theory gives us a clean way to think about this. Recall from Chapter~6
+that unbounded polymorphism looks like:
+
+\[
+  \forall \alpha.\; T
+\]
+
+Here $\alpha$ ranges over all types without restriction. If $T = \alpha \to
+\alpha \to \alpha$, then this is the type of a function that takes two values
+of any type and returns a value of that same type. The quintessential example
+is a generic identity or a generic addition.
+
+But the addition case goes wrong, as we just saw. What we want is something
+like:
+
+\[
+  \forall \alpha <: \text{Addable}.\; \alpha \to \alpha \to \alpha
+\]
+
+Read this aloud: ``for all $\alpha$ that is a subtype of (or satisfies)
+Addable, a function from $\alpha$ and $\alpha$ to $\alpha$''. The bound
+\(\text{Addable}\) restricts what types can be substituted for $\alpha$.
+
+This is called \textbf{bounded quantification}. The general form is:
+
+\begin{definition}[Bounded Quantification]
+A \textbf{bounded universally quantified type} has the form
+\[
+  \forall \alpha <: B.\; T
+\]
+where $\alpha$ is a type variable, $B$ is a \textbf{bound} (a type or
+constraint), and $T$ is a type expression that may mention $\alpha$. A type
+$\tau$ may be substituted for $\alpha$ only if $\tau <: B$ (i.e., $\tau$
+satisfies the constraint $B$).
+\end{definition}
+
+There are two different interpretations of what ``$<:$'' means here, and this
+distinction is crucial:
+
+\begin{enumerate}
+  \item \textbf{Subtype-based bounds}: $\tau <: B$ means $\tau$ is a subtype
+        of $B$ in the usual sense --- every value of type $\tau$ is also a
+        value of type $B$. This is the approach taken by Java and Scala's
+        generics (e.g., \code{<T extends Comparable<T>>}).
+
+  \item \textbf{Predicate-based bounds}: $\tau <: B$ means $\tau$ satisfies
+        the predicate (interface, constraint, concept) $B$ --- that is, $\tau$
+        provides certain operations. $B$ is not a type that $\tau$ inhabits but
+        a condition that $\tau$ must fulfill. This is closer to Haskell's type
+        classes and C++20's concepts.
+\end{enumerate}
+
+These two interpretations have different theoretical properties and lead to
+different language designs, as we will see throughout this chapter. But they
+share the central idea: \textbf{the type variable is bounded, not free}.
+
+\begin{intuition}
+Think of it like a job requirement. An unbounded type variable is like a job
+posting that says ``anyone can apply''. A bounded type variable is like a job
+posting that says ``applicants must have 5 years of Python experience''. The
+pool of eligible candidates is restricted, but within that pool, the function
+works for all of them generically.
+\end{intuition}
+
+The terminology in the literature is worth noting. Bounded polymorphism is also
+called:
+\begin{itemize}
+  \item \textbf{Qualified types} (Mark P. Jones's framework, which we discuss
+        in Section~\ref{sec:qualified-types})
+  \item \textbf{Constrained genericity} (Ada and Eiffel communities)
+  \item \textbf{Ad-hoc polymorphism made systematic} (Wadler and Blott's
+        description of type classes)
+  \item \textbf{Bounded generics} (Java and Kotlin)
+\end{itemize}
+
+The diversity of names reflects the fact that multiple research communities
+arrived at similar ideas independently. The underlying mathematics, however,
+converges.
+
+
+\newcommand{\Fsub}{\ensuremath{F_{<:}}}
+% ============================================================
+\section{System F-sub: The Formal Foundation}
+\label{sec:system-f-sub}
+% ============================================================
+
+The formal type system that captures bounded quantification is called
+\textbf{System \Fsub{}} (pronounced ``F-sub''), introduced by Cardelli and
+Wegner in 1985 and deeply studied by Pierce and Turner in the 1990s. It extends
+System F (the polymorphic lambda calculus from Chapter~6) with a \emph{subtype
+relation}.
+
+Let us build it up carefully.
+
+\subsection{The Subtype Relation}
+
+In System \Fsub{}, every type has a place in a subtype ordering. We write
+$\sigma <: \tau$ to mean ``$\sigma$ is a subtype of $\tau$'', which intuitively
+means that any value of type $\sigma$ can be used where a $\tau$ is expected.
+
+The subtype relation must satisfy:
+\begin{align*}
+  \tau &<: \tau & &\text{(reflexivity)} \\
+  \sigma <: \tau,\; \tau <: \rho &\implies \sigma <: \rho & &\text{(transitivity)}
+\end{align*}
+
+There is also a distinguished type $\top$ (``Top'') such that $\tau <: \top$
+for every type $\tau$. This is the type of which everything is a subtype ---
+it corresponds to \code{Object} in Java, or \code{Any} in Scala.
+
+\subsection{Bounded Type Abstraction}
+
+In ordinary System F, we have type abstraction:
+\[
+  \Lambda \alpha.\; e : \forall \alpha.\; T
+\]
+where $e$ is an expression and $T$ is a type that may mention $\alpha$.
+
+In System \Fsub{}, we add a bound:
+\[
+  \Lambda \alpha <: B.\; e : \forall \alpha <: B.\; T
+\]
+
+The bound $B$ is part of the type. When we \emph{apply} a polymorphic value of
+type $\forall \alpha <: B.\; T$ to a type $\tau$, we must provide evidence that
+$\tau <: B$. Formally:
+
+\[
+  \frac{e : \forall \alpha <: B.\; T \qquad \tau <: B}
+       {e[\tau] : T[\tau/\alpha]}
+\]
+
+This is the type application rule in System \Fsub{}. The constraint $\tau <: B$
+is \emph{checked by the type checker} at the application site, not buried inside
+the function body. This is exactly what was missing from C++ templates.
+
+\begin{keyinsight}[Where the Error Goes]
+In unconstrained template C++, the error is caught \emph{inside the function
+body} when the compiler tries to instantiate it. In System \Fsub{} (and in
+C++20 concepts), the constraint is checked \emph{at the call site}. This means
+errors appear in your code, not deep inside a library. The abstraction boundary
+holds.
+\end{keyinsight}
+
+\subsection{A Worked Example in System F-sub Notation}
+
+Let us write our \code{add} function formally. First we define a ``bound'' for
+types that support addition. In System \Fsub{}, we might represent this as a
+record type:
+\[
+  \text{Addable} = \{ \mathit{add} : \alpha \to \alpha \to \alpha \}
+\]
+(A record with a single field \textit{add}.) Then:
+\[
+  \mathit{add} : \forall \alpha <: \text{Addable}.\; \alpha \to \alpha \to \alpha
+\]
+
+And the typing rule requires that when you write $\mathit{add}[\tau]$, you must
+prove $\tau <: \text{Addable}$, i.e., $\tau$ has an \textit{add} method of the
+right type.
+
+This is elegant, but it has a practical limitation: in the subtype-based
+interpretation, $\tau <: \text{Addable}$ means that $\tau$ literally contains an
+\textit{add} field. This is \emph{structural} or \emph{nominal} subtyping, which
+maps directly to Java-style inheritance but not to C++'s \code{operator+} or
+Haskell's type classes. For those, we need a different model, which we now
+develop.
+
+
+% ============================================================
+\section{Type Classes: Haskell's Approach}
+\label{sec:type-classes}
+% ============================================================
+
+Haskell's solution to constrained polymorphism is one of the most elegant ideas
+in programming language design. It was introduced by Wadler and Blott in 1989
+in a paper titled ``How to Make Ad-hoc Polymorphism Less Ad Hoc'' --- a title
+that perfectly captures the motivation.
+
+The key insight is: \textbf{instead of constraining T by subtyping, constrain
+T by declaring that it satisfies a \emph{predicate} --- a set of required
+operations}.
+
+\subsection{Defining a Type Class}
+
+Here is the simplest non-trivial type class, \typename{Eq}, for types that
+support equality testing:
+
+\begin{lstlisting}[style=haskell]
+class Eq a where
+    (==) :: a -> a -> Bool
+    (/=) :: a -> a -> Bool
+    -- Default implementation: inequality is negated equality
+    x /= y = not (x == y)
+\end{lstlisting}
+
+This declares a \textbf{class} (a predicate on types) named \code{Eq}. Any
+type \code{a} that is an \emph{instance} of \code{Eq} must provide a function
+\code{(==) :: a -> a -> Bool}. The \code{(/=)} function has a default
+implementation, so instances may omit it.
+
+A type class definition has two parts:
+\begin{enumerate}
+  \item The \textbf{class declaration}: names the class and lists the required
+        operations (the \emph{method signatures}).
+  \item The \textbf{instance declarations}: for each concrete type, a proof
+        that the type satisfies the predicate.
+\end{enumerate}
+
+\subsection{Instance Declarations}
+
+To make \typename{Int} an instance of \code{Eq}:
+
+\begin{lstlisting}[style=haskell]
+instance Eq Int where
+    (==) = primIntEq   -- delegates to a primitive
+
+instance Eq Bool where
+    True  == True  = True
+    False == False = True
+    _     == _     = False
+
+instance Eq a => Eq [a] where
+    []     == []     = True
+    (x:xs) == (y:ys) = x == y && xs == ys
+    _      == _      = False
+\end{lstlisting}
+
+That last instance is beautiful. It says: if \code{a} is an instance of
+\code{Eq}, then \code{[a]} (lists of \code{a}) is also an instance of
+\code{Eq}. The constraint propagates compositionally.
+
+\subsection{Using Type Classes in Function Signatures}
+
+Now we can write a function that \emph{explicitly states} its constraints:
+
+\begin{lstlisting}[style=haskell]
+-- This function only works for types that support equality.
+-- The constraint is IN THE TYPE SIGNATURE.
+nub :: Eq a => [a] -> [a]
+nub []     = []
+nub (x:xs) = x : nub (filter (/= x) xs)
+\end{lstlisting}
+
+The \code{Eq a =>} part is the \textbf{class constraint}. It is part of the
+type. If you call \code{nub} with a list of a type that does not have an
+\code{Eq} instance, the compiler tells you exactly that --- at the \emph{call
+site} --- with a clear, targeted error message.
+
+\subsection{A Tour of Important Type Classes}
+
+Haskell's standard library is organized around type classes. Here are the most
+important ones:
+
+\begin{example}[The Haskell Type Class Hierarchy]
+\begin{lstlisting}[style=haskell]
+-- Ordering: for types with a linear order
+class Eq a => Ord a where
+    compare :: a -> a -> Ordering  -- LT, EQ, GT
+    (<), (<=), (>), (>=) :: a -> a -> Bool
+    min, max :: a -> a -> a
+
+-- Showing: for types that can be converted to strings
+class Show a where
+    show :: a -> String
+
+-- Functors: type constructors that support mapping
+class Functor f where
+    fmap :: (a -> b) -> f a -> f b
+
+-- Applicative functors: functors with "apply"
+class Functor f => Applicative f where
+    pure  :: a -> f a
+    (<*>) :: f (a -> b) -> f a -> f b
+
+-- Monads: the famous sequencing abstraction
+class Applicative m => Monad m where
+    (>>=) :: m a -> (a -> m b) -> m b
+    return :: a -> m a
+    return = pure  -- default
+\end{lstlisting}
+
+Notice how these classes form a \emph{hierarchy}: \code{Ord} requires
+\code{Eq}, \code{Applicative} requires \code{Functor}, \code{Monad} requires
+\code{Applicative}. This is constraint refinement: a \code{Monad} is
+necessarily a \code{Functor}, but not vice versa.
+\end{example}
+
+\subsection{The Dictionary-Passing Translation}
+
+Here is a question that every thoughtful person asks when first encountering
+type classes: how does the compiler actually \emph{implement} this? When you
+call \code{nub}, which \code{==} does it use? The one for \typename{Int}, or
+\typename{Bool}, or \code{[a]}?
+
+The answer is the \textbf{dictionary-passing translation}. This is the key
+implementation technique, and understanding it will deepen your understanding
+of what type classes really are.
+
+The compiler automatically transforms constrained functions by threading an
+extra argument --- the \textbf{dictionary} (also called the ``witness'') ---
+that contains the implementations of the required methods.
+
+Concretely, the Haskell type:
+\begin{lstlisting}[style=haskell]
+nub :: Eq a => [a] -> [a]
+\end{lstlisting}
+
+is compiled into something like this (in a hypothetical ``Core'' notation):
+
+\begin{lstlisting}[style=haskell]
+-- The dictionary type for Eq a
+data EqDict a = EqDict { dictEq :: a -> a -> Bool
+                       , dictNeq :: a -> a -> Bool }
+
+-- The compiled version of nub
+nub :: EqDict a -> [a] -> [a]
+nub dict []     = []
+nub dict (x:xs) = x : nub dict (filter (\y -> dictNeq dict x y) xs)
+\end{lstlisting}
+
+When you call \code{nub [1, 2, 1, 3 :: Int]}, the compiler knows at compile
+time that \code{a = Int}, looks up the \code{Eq Int} instance, constructs
+the corresponding \code{EqDict Int} record, and passes it automatically.
+
+\begin{keyinsight}[Type Classes as Implicit Parameters]
+The dictionary-passing translation reveals type classes for what they really
+are: \textbf{implicit, automatically-managed function parameters} carrying
+the implementations of the required operations. The compiler synthesizes the
+right dictionary at each call site based on the types involved. This is why
+you never write the dictionary yourself --- but it is definitely there.
+\end{keyinsight}
+
+This translation also explains a fundamental property of type classes: there
+must be at most one instance of a type class for a given type. If there were
+two \code{Eq Int} instances with different behavior, the compiler would not
+know which dictionary to pass. This is the \textbf{coherence} requirement,
+which we revisit in Section~\ref{sec:qualified-types}.
+
+
+% ============================================================
+\section{Type Classes vs.\ Interfaces vs.\ Concepts}
+\label{sec:comparison}
+% ============================================================
+
+The same fundamental problem --- how to constrain polymorphism --- has been
+solved three different ways by three major language traditions. It is
+illuminating to compare them directly.
+
+\subsection{Java Interfaces: Subtyping-Based Constraints}
+
+In Java, you constrain generics using interfaces and inheritance:
+
+\begin{lstlisting}[style=pseudocode]
+// Java
+interface Addable<T> {
+    T add(T other);
+}
+
+// Bounded generic: T must implement Addable<T>
+<T extends Addable<T>> T sum(List<T> items) {
+    T result = items.get(0);
+    for (T item : items.subList(1, items.size())) {
+        result = result.add(item);
+    }
+    return result;
+}
+\end{lstlisting}
+
+The key feature: the constraint is satisfied by \emph{inheritance}. A type
+satisfies \code{Addable<T>} by \emph{declaring} \code{implements Addable<T>}.
+This is \textbf{nominal subtyping}: the relationship is declared, not
+structurally inferred.
+
+A critical consequence: you cannot retroactively make an existing type satisfy
+a new interface. If \typename{Integer} does not implement \code{Addable<Integer>}
+in its class definition, you cannot change that later without modifying the
+source. This is the \textbf{expression problem} in a different guise.
+
+\subsection{Haskell Type Classes: Predicate-Based Constraints}
+
+As we saw above, Haskell's approach separates the type from its
+``implementations of interfaces''. A type class instance is a \emph{separate
+declaration}, not part of the type definition.
+
+This means you can retroactively add instances. If you write a new type class
+\code{Serializable}, you can write \code{instance Serializable Int} without
+touching the definition of \typename{Int}. This is one of the major practical
+advantages of type classes over interface inheritance.
+
+\subsection{C++20 Concepts: Structural, Requirement-Based Constraints}
+
+C++ concepts are closest to \emph{structural typing with explicit requirements}.
+A concept is a predicate on types that is checked by testing whether certain
+expressions are valid:
+
+\begin{lstlisting}[style=cpp]
+// A concept is a compile-time predicate on types
+template<typename T>
+concept Addable = requires(T a, T b) {
+    { a + b } -> std::convertible_to<T>;
+};
+\end{lstlisting}
+
+The key feature: a type satisfies a concept if the specified expressions
+\emph{compile and have the right types}. No declaration is needed. This is
+\textbf{structural} satisfaction: it is based on what the type can \emph{do},
+not on what it says it \emph{is}.
+
+\begin{keyinsight}[Three Models of Constraint Satisfaction]
+\begin{itemize}
+  \item \textbf{Java}: ``I am X'' --- constraint satisfied by explicit
+        inheritance declaration. Nominal subtyping.
+  \item \textbf{Haskell}: ``I have these implementations'' --- constraint
+        satisfied by instance declaration. Predicate-based with coherence.
+  \item \textbf{C++}: ``These expressions compile'' --- constraint satisfied
+        by structural validity of operations. Structural checking.
+\end{itemize}
+Java requires modification of the type's definition. Haskell requires a
+separate instance declaration (which can be in a different module). C++ requires
+nothing --- if the operations exist, the type satisfies the concept
+automatically.
+\end{keyinsight}
+
+\begin{tabular}{lccc}
+\toprule
+\textbf{Property} & \textbf{Java Interfaces} & \textbf{Haskell Type Classes} & \textbf{C++ Concepts} \\
+\midrule
+Satisfaction model   & Nominal      & Predicate + Coherence & Structural \\
+Retroactive impl.    & No           & Yes (new instance)    & Automatic  \\
+Multiple impls.      & No           & No (coherence)        & N/A        \\
+Error location       & Call site    & Call site             & Call site  \\
+Default methods      & Yes (Java 8) & Yes                   & N/A        \\
+Implementation hidden & Yes         & Yes (via dictionary)  & No (inline) \\
+Runtime dispatch     & Yes (vtable) & Sometimes             & No         \\
+\bottomrule
+\end{tabular}
+
+
+% ============================================================
+\section{C++20 Concepts in Depth}
+\label{sec:cpp20-concepts}
+% ============================================================
+
+C++20 concepts are, from this author's perspective, the single most important
+addition to C++ since templates themselves. They solve the error-message
+catastrophe, they make templates self-documenting, and they enable a new style
+of overloading that was previously impossible. Let us explore them thoroughly.
+
+\subsection{Defining a Concept}
+
+A concept is defined with the \code{concept} keyword. The right-hand side is a
+\emph{compile-time Boolean expression} evaluated in the context of the type
+parameter:
+
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+#include <type_traits>
+
+// The simplest possible concept: T must be an integral type
+template<typename T>
+concept Integral = std::is_integral_v<T>;
+
+// T must support addition with the result convertible back to T
+template<typename T>
+concept Addable = requires(T a, T b) {
+    { a + b } -> std::convertible_to<T>;
+};
+
+// T must be both copyable and default-constructible
+template<typename T>
+concept RegularType = std::copyable<T> && std::default_initializable<T>;
+\end{lstlisting}
+
+The Boolean expressions can be:
+\begin{itemize}
+  \item \textbf{Type traits}: \code{std::is\_integral\_v<T>}
+  \item \textbf{\code{requires} expressions}: test whether certain expressions
+        are valid (the most powerful form)
+  \item \textbf{Conjunctions} (\code{\&\&}) and \textbf{disjunctions}
+        (\code{||}) of other concept checks
+  \item \textbf{Other concepts}: concepts can be defined in terms of other
+        concepts
+\end{itemize}
+
+\subsection{Using Concepts to Constrain Templates}
+
+Once you have a concept, you can use it to constrain a template in four
+equivalent syntactic forms:
+
+\begin{lstlisting}[style=cpp]
+// Form 1: Concept name in place of "typename"
+template<Addable T>
+T add(T a, T b) {
+    return a + b;
+}
+
+// Form 2: Requires clause after template parameter list
+template<typename T>
+    requires Addable<T>
+T add(T a, T b) {
+    return a + b;
+}
+
+// Form 3: Requires clause after function signature (for SFINAE replacement)
+template<typename T>
+T add(T a, T b) requires Addable<T> {
+    return a + b;
+}
+
+// Form 4: Abbreviated function template (C++20 terse syntax)
+auto add(Addable auto a, Addable auto b) -> decltype(a + b) {
+    return a + b;
+}
+\end{lstlisting}
+
+All four forms express the same constraint. The choice between them is largely
+aesthetic, though the \code{requires} clause form (Form 2) is most flexible
+because it can express complex multi-parameter constraints.
+
+\begin{cppconnection}[Error Messages With and Without Concepts]
+Compare the error messages you get for the same mistake:
+
+Without concepts (C++17):
+\begin{lstlisting}[style=pseudocode]
+# template<typename T> T add(T a, T b) { return a + b; }
+error: no match for 'operator+' in a + b
+  In instantiation of 'T add(T, T) [with T = std::vector<int>]'
+  required from ...
+  [12 more lines of template backtrace]
+\end{lstlisting}
+
+With concepts (C++20):
+\begin{lstlisting}[style=pseudocode]
+# template<Addable T> T add(T a, T b) { return a + b; }
+error: no matching function for call to 'add(std::vector<int>, std::vector<int>)'
+note: constraints not satisfied
+note: 'Addable<std::vector<int>>' evaluated to false
+note: 'a + b' is not valid for std::vector<int>
+\end{lstlisting}
+
+The concept version tells you \emph{exactly} what went wrong and \emph{why},
+at the call site, in language that makes sense.
+\end{cppconnection}
+
+\subsection{The Standard Library Concepts}
+
+C++20 ships with a large vocabulary of predefined concepts in
+\code{<concepts>} and elsewhere:
+
+\begin{lstlisting}[style=cpp]
+// Core language concepts
+std::same_as<T, U>         // T and U are the same type
+std::derived_from<T, Base> // T is derived from Base
+std::convertible_to<T, U>  // T is implicitly convertible to U
+std::assignable_from<T, U> // T& = U is valid
+
+// Comparison concepts
+std::equality_comparable<T>        // T supports ==
+std::totally_ordered<T>            // T supports <, >, <=, >=
+
+// Object concepts
+std::destructible<T>               // T can be destroyed
+std::default_initializable<T>      // T can be default-constructed
+std::copy_constructible<T>         // T can be copy-constructed
+std::move_constructible<T>         // T can be move-constructed
+std::copyable<T>                   // Copy constructible + assignable
+std::movable<T>                    // Move constructible + assignable
+std::regular<T>                    // Copyable + equality comparable
+
+// Callable concepts
+std::invocable<F, Args...>         // F can be called with Args
+std::predicate<F, Args...>         // F(Args) returns bool-like
+
+// Iterator and range concepts
+std::input_iterator<I>
+std::forward_iterator<I>
+std::bidirectional_iterator<I>
+std::random_access_iterator<I>
+std::sortable<R>                   // Range R can be sorted
+\end{lstlisting}
+
+These concepts form a rich, carefully-designed hierarchy. \code{std::regular}
+implies \code{std::copyable}, which implies \code{std::movable}, and so on.
+This hierarchy mirrors the mathematical properties of objects and is directly
+inspired by Alexander Stepanov's work on generic programming.
+
+
+% ============================================================
+\section{Requires Expressions: The Full Power}
+\label{sec:requires-expressions}
+% ============================================================
+
+The most expressive part of the concepts machinery is the \code{requires}
+\emph{expression} --- the construct inside \code{requires(...) \{ ... \}}.
+There are four kinds of requirements you can place inside a requires expression,
+and together they can express almost any constraint you can think of.
+
+\subsection{Simple Requirements}
+
+A simple requirement just checks that an expression is valid:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+concept HasSizeMethod = requires(T t) {
+    t.size();       // T must have a .size() member
+    t.empty();      // T must have a .empty() member
+    t.clear();      // T must have a .clear() member
+};
+\end{lstlisting}
+
+This does not check the \emph{return type} --- only that the expression compiles.
+
+\subsection{Type Requirements}
+
+A type requirement checks that a type expression is valid:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+concept HasValueType = requires {
+    typename T::value_type;       // T must have a nested type value_type
+    typename T::iterator;         // T must have a nested type iterator
+};
+\end{lstlisting}
+
+This is how you require that a type has certain associated types --- a concept
+that becomes very important when we talk about type families in
+Section~\ref{sec:multiparamtc}.
+
+\subsection{Compound Requirements}
+
+A compound requirement checks both that an expression is valid \emph{and} that
+its result type satisfies some condition:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+concept Sizeable = requires(T t) {
+    { t.size() } -> std::convertible_to<std::size_t>;
+    // Means: t.size() must compile AND its result must convert to size_t
+};
+
+template<typename T>
+concept Comparable = requires(T a, T b) {
+    { a < b }  -> std::convertible_to<bool>;
+    { a == b } -> std::convertible_to<bool>;
+    { a != b } -> std::convertible_to<bool>;
+};
+\end{lstlisting}
+
+The \code{\{ expr \} -> TypeConstraint} syntax is unique to compound
+requirements. It is arguably the most useful form because it constrains the
+return type, not just the expression's validity.
+
+\subsection{Nested Requirements}
+
+A nested requirement places a \code{requires} clause \emph{inside} a requires
+expression:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+concept NonNegativeSizeable = requires(T t) {
+    { t.size() } -> std::convertible_to<std::size_t>;
+    requires (sizeof(T) > 0);  // Nested: must satisfy a compile-time predicate
+};
+\end{lstlisting}
+
+\subsection{Combining Requirements: Conjunction and Disjunction}
+
+Concepts can be combined with \code{\&\&} (conjunction) and \code{||} (disjunction):
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+concept Number = std::integral<T> || std::floating_point<T>;
+
+template<typename T>
+concept SortableContainer =
+    HasValueType<T> &&
+    HasSizeMethod<T> &&
+    Comparable<typename T::value_type>;
+
+// A complex real-world concept for a serializable type
+template<typename T>
+concept Serializable = requires(T t, std::ostream& os) {
+    { os << t } -> std::same_as<std::ostream&>;
+    typename T::serial_tag;
+    requires std::default_initializable<T>;
+};
+\end{lstlisting}
+
+\begin{example}[A Complete Concept-Constrained Stack]
+Let us write a small but realistic example that puts all of this together:
+
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+#include <vector>
+#include <stdexcept>
+
+// Concept: T must be usable as a stack element
+template<typename T>
+concept StackElement =
+    std::copyable<T> &&
+    std::equality_comparable<T>;
+
+// A generic stack, constrained properly
+template<StackElement T>
+class Stack {
+    std::vector<T> data;
+public:
+    void push(const T& val) { data.push_back(val); }
+    void push(T&& val)      { data.push_back(std::move(val)); }
+
+    T pop() {
+        if (data.empty()) throw std::underflow_error("empty stack");
+        T top = std::move(data.back());
+        data.pop_back();
+        return top;
+    }
+
+    bool contains(const T& val) const {
+        for (const T& x : data)
+            if (x == val) return true;  // Requires equality_comparable
+        return false;
+    }
+
+    std::size_t size() const { return data.size(); }
+    bool empty() const { return data.empty(); }
+};
+\end{lstlisting}
+
+Any attempt to instantiate \code{Stack<T>} with a non-copyable or
+non-equality-comparable \code{T} will produce a clear error at the point of
+instantiation, not inside the \code{contains} method.
+\end{example}
+
+
+% ============================================================
+\section{Constrained Auto and Abbreviated Templates}
+\label{sec:constrained-auto}
+% ============================================================
+
+One of the most readable features of C++20 is the ability to use concepts
+directly with \code{auto} in function signatures and variable declarations.
+This creates what the standard calls \textbf{abbreviated function templates}.
+
+\subsection{Constrained Auto in Function Parameters}
+
+Before C++20, writing a sort function for any sortable container was verbose:
+
+\begin{lstlisting}[style=cpp]
+// C++17: cryptic, no constraint visible in signature
+template<typename Container>
+void sort_it(Container& c) {
+    std::sort(c.begin(), c.end());
+}
+
+// C++20: crystal clear
+void sort_it(std::sortable auto& c) {
+    std::sort(c.begin(), c.end());
+}
+\end{lstlisting}
+
+The second version reads almost like natural language: ``sort\_it takes a
+reference to some sortable thing''. The concept is \emph{right there in the
+signature}, where a reader will see it immediately.
+
+\subsection{Constrained Auto in Variable Declarations}
+
+You can also use constrained auto in variable declarations:
+
+\begin{lstlisting}[style=cpp]
+// This declares x to be some integer type (determined by the initializer)
+// but asserts at compile time that the type is integral
+std::integral auto x = compute_count();
+
+// This is a function pointer to something callable with int
+std::invocable<int> auto f = [](int n) { return n * 2; };
+\end{lstlisting}
+
+\subsection{Multiple Constrained Parameters}
+
+When you use constrained auto for multiple parameters, each gets its own
+(potentially different) type:
+
+\begin{lstlisting}[style=cpp]
+// Both a and b are Addable, but they may be different Addable types!
+auto add(Addable auto a, Addable auto b) {
+    return a + b;  // This may or may not compile depending on a's and b's types
+}
+
+// If you want them to be the SAME type, use a named template parameter:
+template<Addable T>
+T add(T a, T b) {
+    return a + b;
+}
+\end{lstlisting}
+
+This is an important subtlety. \code{Addable auto a, Addable auto b} means
+``a is some Addable type, b is some Addable type'' --- but they can be
+different Addable types. \code{template<Addable T> T add(T a, T b)} means
+both a and b have the \emph{same} Addable type T.
+
+\begin{keyinsight}[Concepts Improve Readability]
+One of the underappreciated benefits of concepts is documentation. A function
+signature with concepts tells you, at a glance:
+\begin{itemize}
+  \item What operations the type must support
+  \item What the function guarantees in return
+  \item What kinds of types are appropriate to pass
+\end{itemize}
+This is self-documenting code in the truest sense: the constraints live in the
+code itself, not in a comment that can go stale.
+\end{keyinsight}
+
+
+% ============================================================
+\section{Concept Subsumption and Constraint Overloading}
+\label{sec:concept-subsumption}
+% ============================================================
+
+One of the most theoretically interesting aspects of C++20 concepts is how they
+interact with function overloading. This gives us a form of \textbf{constraint
+specialization}: the compiler can pick the \emph{most constrained} overload
+that applies.
+
+\subsection{The Subsumption Rule}
+
+Concept $A$ is said to \textbf{subsume} concept $B$ if the logical formula of
+$A$ implies the logical formula of $B$. In C++20, this is defined precisely: a
+concept $P$ subsumes concept $Q$ if every constraint in $Q$'s normalized form
+appears in $P$'s normalized form.
+
+The practical consequence: if concept \code{Ordered} is defined as
+\code{Equality \&\& LessThan}, then \code{Ordered} subsumes both
+\code{Equality} and \code{LessThan}.
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+concept Equality = requires(T a, T b) {
+    { a == b } -> std::convertible_to<bool>;
+};
+
+template<typename T>
+concept Ordered = Equality<T> && requires(T a, T b) {
+    { a < b } -> std::convertible_to<bool>;
+};
+// Ordered subsumes Equality, because Ordered implies Equality.
+\end{lstlisting}
+
+\subsection{Overloading Based on Constraints}
+
+This subsumption relation creates a \emph{partial ordering} on constrained
+function overloads. The compiler picks the most constrained overload that
+matches:
+
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+
+// Overload 1: works for any input iterator (base case)
+template<std::input_iterator I>
+void advance(I& it, int n) {
+    // Slow path: advance one step at a time
+    for (int i = 0; i < n; ++i) ++it;
+}
+
+// Overload 2: works for random-access iterators (more constrained)
+// std::random_access_iterator subsumes std::input_iterator
+template<std::random_access_iterator I>
+void advance(I& it, int n) {
+    // Fast path: jump directly
+    it += n;
+}
+
+// When you call advance(vec.begin(), 10):
+// - vec.begin() is a random_access_iterator
+// - Both overloads match, but overload 2 is MORE constrained
+// - The compiler picks overload 2 automatically
+\end{lstlisting}
+
+This is deeply elegant. The standard library uses this pattern extensively:
+algorithms have more efficient implementations for more constrained iterator
+categories, and the right one is selected automatically based on the type of
+the iterator you provide.
+
+\begin{keyinsight}[Subsumption as a Partial Order on Constraints]
+The subsumption relation gives constraints a partial order: if $P$ subsumes $Q$
+(written $P \succeq Q$), then $P$ is a \emph{stronger} constraint. When
+multiple overloads match, the compiler picks the one with the strongest
+applicable constraint. This is analogous to method resolution in languages with
+inheritance: the most specific method wins. Except here, ``most specific'' is
+defined by \emph{logical implication between constraints}, not by the class
+hierarchy.
+\end{keyinsight}
+
+\begin{warning}[Ambiguous Overloads]
+If two overloads are constrained by concepts that do not subsume each other ---
+neither implies the other --- then a call matching both is \emph{ambiguous} and
+the compiler will reject it:
+
+\begin{lstlisting}[style=cpp]
+template<std::integral T>
+void process(T x) { /* integer path */ }
+
+template<std::floating_point T>
+void process(T x) { /* float path */ }
+
+// process(42);     -- OK, only integral matches
+// process(3.14);   -- OK, only floating_point matches
+// process(???);    -- If some T satisfies both (impossible here, but
+//                     in general: if both match, you get an ambiguity error)
+\end{lstlisting}
+
+This is by design: the compiler refuses to guess when no overload is strictly
+more constrained than another.
+\end{warning}
+
+
+% ============================================================
+\section{Rust Traits: A Comparative View}
+\label{sec:rust-traits}
+% ============================================================
+
+No chapter on constrained polymorphism would be complete without discussing
+Rust's \textbf{traits}. Rust's type system is strongly influenced by Haskell's
+type classes but adapted for a language with ownership and lifetimes. The result
+is something that sits between Haskell type classes and C++ concepts in the
+design space.
+
+\subsection{Defining and Implementing Traits}
+
+\begin{lstlisting}[style=pseudocode]
+// Rust
+// Define a trait: a set of required methods
+trait Addable {
+    fn add(self, other: Self) -> Self;
+}
+
+// Implement the trait for a concrete type
+impl Addable for i32 {
+    fn add(self, other: i32) -> i32 {
+        self + other
+    }
+}
+
+// Implement for a custom type
+struct Point { x: f64, y: f64 }
+
+impl Addable for Point {
+    fn add(self, other: Point) -> Point {
+        Point { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+\end{lstlisting}
+
+Like Haskell type classes, trait implementations are separate from type
+definitions. Like C++ concepts, the trait specifies what operations must exist.
+
+\subsection{Trait Bounds in Function Signatures}
+
+\begin{lstlisting}[style=pseudocode]
+// The bound syntax: T: TraitName
+fn generic_add<T: Addable>(a: T, b: T) -> T {
+    a.add(b)
+}
+
+// Multiple bounds with +
+fn print_and_compare<T: std::fmt::Display + PartialOrd>(a: T, b: T) {
+    if a < b {
+        println!("{} < {}", a, b);
+    }
+}
+
+// Where clauses for complex bounds (more readable for many constraints)
+fn complex<T, U>(x: T, y: U)
+where
+    T: Clone + std::fmt::Debug,
+    U: Iterator<Item = T>,
+{
+    // ...
+}
+\end{lstlisting}
+
+The \code{where} clause is Rust's equivalent of Haskell's constraint list, and
+it solves the same readability problem: when constraints are complex, putting
+them at the end of the signature keeps the main signature clean.
+
+\subsection{Key Differences from Haskell Type Classes}
+
+\begin{enumerate}
+  \item \textbf{Coherence and Orphan Rules}: Rust enforces coherence (at most
+        one implementation of a trait for a given type) through \emph{orphan
+        rules}: you can only implement a trait for a type if \emph{either}
+        the trait \emph{or} the type is defined in your current crate (module).
+        This prevents two different libraries from providing conflicting
+        implementations.
+
+  \item \textbf{Blanket Implementations}: Rust allows implementing a trait for
+        all types satisfying some bound:
+        \begin{lstlisting}[style=pseudocode]
+// Implement Display for all T that implement Debug
+impl<T: std::fmt::Debug> std::fmt::Display for T { ... }
+        \end{lstlisting}
+
+  \item \textbf{Object Safety and dyn Trait}: Rust traits can be used both for
+        static dispatch (like C++ concepts, resolved at compile time) and for
+        dynamic dispatch (like virtual functions, via \code{dyn Trait}). This
+        duality is unique to Rust.
+
+  \item \textbf{Associated Types}: Traits can have \emph{associated types} that
+        are determined by the implementation:
+        \begin{lstlisting}[style=pseudocode]
+trait Iterator {
+    type Item;           // Associated type
+    fn next(&mut self) -> Option<Self::Item>;
+}
+        \end{lstlisting}
+        This is Rust's equivalent of Haskell's associated type families (which
+        we discuss in Section~\ref{sec:multiparamtc}).
+\end{enumerate}
+
+\begin{keyinsight}[Traits as the Middle Path]
+Rust traits occupy a careful middle ground: they have Haskell's \emph{explicit
+instance declarations} (so you must say that a type implements a trait), but
+they support \emph{structural} checking via object safety rules. They enforce
+Haskell-style \emph{coherence} via orphan rules, but they support both static
+and dynamic dispatch. Rust's design choices are motivated by its focus on
+systems programming: you need predictable performance (hence static dispatch by
+default) and strong safety guarantees (hence coherence rules).
+\end{keyinsight}
+
+
+% ============================================================
+\section{The Theory: Qualified Types}
+\label{sec:qualified-types}
+% ============================================================
+
+We have been talking about constraints informally. Let us now look at the formal
+theoretical framework that unifies all of the above: Mark P. Jones's theory of
+\textbf{qualified types}, published in 1992.
+
+\subsection{Predicates on Types}
+
+The central idea is simple: instead of having types and constraints as separate
+things, we treat constraints as \emph{predicates on type variables} that
+appear in the type signature.
+
+A \textbf{qualified type} has the form:
+\[
+  \forall \bar{\alpha}.\; \pi_1, \pi_2, \ldots, \pi_n \Rightarrow \tau
+\]
+
+where:
+\begin{itemize}
+  \item $\bar{\alpha} = \alpha_1, \ldots, \alpha_k$ are type variables (bound
+        by the universal quantifier)
+  \item $\pi_i$ are \textbf{predicates} --- conditions that the type variables
+        must satisfy
+  \item $\tau$ is the underlying type
+\end{itemize}
+
+The predicates $\pi_i$ are \emph{class constraints} in Haskell's notation.
+For example, Haskell's:
+\begin{lstlisting}[style=haskell]
+nub :: Eq a => [a] -> [a]
+\end{lstlisting}
+corresponds to the qualified type:
+\[
+  \forall \alpha.\; \text{Eq}(\alpha) \Rightarrow [\alpha] \to [\alpha]
+\]
+
+And Haskell's:
+\begin{lstlisting}[style=haskell]
+sortAndNub :: (Ord a, Show a) => [a] -> [a]
+\end{lstlisting}
+corresponds to:
+\[
+  \forall \alpha.\; \text{Ord}(\alpha), \text{Show}(\alpha) \Rightarrow [\alpha] \to [\alpha]
+\]
+
+\subsection{Entailment and Instance Resolution}
+
+The type system needs a way to \emph{prove} that a predicate holds for a
+specific type. This proof obligation is called \textbf{entailment}: given the
+predicate $P(\tau)$, and a set of known instances (axioms), can we derive that
+$P(\tau)$ holds?
+
+This is essentially logic programming at the type level. The instance
+declarations are axioms:
+\begin{align*}
+  &\text{Eq}(\text{Int}) & &\text{(base instance)} \\
+  &\text{Eq}(\alpha) \Rightarrow \text{Eq}([\alpha]) & &\text{(recursive instance)}
+\end{align*}
+
+And the type checker runs a form of resolution to prove, e.g., that
+$\text{Eq}([\text{Int}])$ holds:
+\[
+  \text{Eq}(\text{Int}) \implies \text{Eq}([\text{Int}]) \qquad (\text{by the recursive instance})
+\]
+
+\subsection{The Coherence Requirement}
+
+For the dictionary-passing translation to work correctly, there must be
+\textbf{at most one proof} (one dictionary) for any given predicate
+$P(\tau)$. If there were two different \code{Eq Int} instances --- perhaps
+one using value equality and another using reference equality --- then the
+compiler would have to choose one arbitrarily, and programs would be
+ambiguous.
+
+\begin{definition}[Coherence]
+A type class system is \textbf{coherent} if for any predicate $P(\tau)$,
+there is at most one way to prove $P(\tau)$ from the available instances. In
+other words, the dictionary-passing translation yields a unique result, and
+the runtime behavior of a program does not depend on which proof of a
+constraint the compiler chose.
+\end{definition}
+
+Haskell enforces coherence by requiring that there be at most one instance of
+a given class for any given type in scope. Rust enforces it through orphan
+rules. Java interfaces are trivially coherent because the implementation is
+attached to the class definition itself.
+
+C++ concepts, interestingly, do not require coherence in the same sense:
+multiple functions can match a concept and do different things. This is fine
+because there is no dictionary-passing: the constraint is checked structurally
+and the code is inlined.
+
+\begin{keyinsight}[Why Coherence Matters]
+Coherence is what makes reasoning about programs with type classes tractable.
+Without coherence, a function's behavior could depend on which \emph{module was
+imported first} or which \emph{instance happened to be in scope}. With
+coherence, you know: for a given type, there is exactly one implementation of
+each class method, determined statically and globally. Your program's behavior
+is a function of its types, not of arbitrary instance selection.
+\end{keyinsight}
+
+\subsection{Type Classes as a Logic}
+
+The qualified types framework reveals that type class constraints form a
+\emph{logic}. Instance declarations are axioms. Constraint propagation
+(\code{Eq a => Eq [a]}) is a rule. Proving that a constrained function can be
+called with specific types is a \emph{proof search} in this logic.
+
+This connection to logic is not merely aesthetic. It explains why type class
+resolution can be undecidable in general (it is equivalent to logic
+programming, which is Turing-complete), and why compilers have to place limits
+on the depth of instance resolution. It also connects to the broader
+Curry-Howard correspondence: type checking is proof checking, and class
+constraints are propositions that must be proved.
+
+
+% ============================================================
+\section{Multi-Parameter Type Classes and Associated Types}
+\label{sec:multiparamtc}
+% ============================================================
+
+So far all our type classes have had a single type parameter: \code{class Eq
+a}, \code{class Ord a}, \code{class Show a}. But the most expressive patterns
+in Haskell --- and the most direct analogs to C++ concepts with multiple
+template parameters --- require \textbf{multi-parameter type classes} (MPTCs)
+and \textbf{associated types}.
+
+\subsection{The Limitation of Single-Parameter Type Classes}
+
+Consider the problem of defining a general type class for containers. A
+container has elements, and the type of the container and the type of its
+elements are distinct:
+
+\begin{lstlisting}[style=haskell]
+-- We want to say: "c is a container of elements e"
+-- But with single-parameter type classes, we can only say "c is a container"
+-- with no way to relate c to its element type.
+class Container c where
+    empty  :: c
+    insert :: ??? -> c -> c  -- What type do the elements have?
+    toList :: c -> [???]     -- What type does this return?
+\end{lstlisting}
+
+There is no clean way to express this. The element type is lost.
+
+\subsection{Multi-Parameter Type Classes}
+
+The solution (available in GHC Haskell via the \code{MultiParamTypeClasses}
+extension) is to allow a class to range over \emph{multiple} type variables:
+
+\begin{lstlisting}[style=haskell]
+{-# LANGUAGE MultiParamTypeClasses #-}
+
+-- "c is a container with element type e"
+class Container c e where
+    empty  :: c
+    insert :: e -> c -> c
+    toList :: c -> [e]
+
+-- Instances relate specific container types to their element types
+instance Container [a] a where
+    empty     = []
+    insert    = (:)
+    toList xs = xs
+
+instance Container (Set a) a where
+    empty  = Set.empty
+    insert = Set.insert
+    toList = Set.toList
+\end{lstlisting}
+
+This is more expressive, but introduces a new problem: the relationship between
+\code{c} and \code{e} is not determined by \code{c} alone. Given
+\code{[Int]}, what is the element type? Well, \code{Int} --- but the type
+checker cannot figure that out without more help, because in principle you
+could have \code{Container [Int] Int} and \code{Container [Int] String} as
+separate instances (mapping a list of ints to strings somehow).
+
+\subsection{Functional Dependencies}
+
+The solution is \textbf{functional dependencies} (also a GHC extension), which
+declare that some type parameters \emph{determine} others:
+
+\begin{lstlisting}[style=haskell]
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
+
+-- "c determines e": given the container type, the element type is fixed
+class Container c e | c -> e where
+    empty  :: c
+    insert :: e -> c -> c
+    toList :: c -> [e]
+\end{lstlisting}
+
+The \code{| c -> e} says: the type parameter \code{c} functionally determines
+\code{e}. Given \code{c}, there is at most one valid \code{e}. This rules out
+ambiguous instances and allows the type checker to infer \code{e} from \code{c}.
+
+\subsection{Associated Types: A Cleaner Syntax}
+
+Modern Haskell (and Rust) prefer \textbf{associated types} over functional
+dependencies as the way to express the same idea. An associated type is a type
+that is part of a class declaration:
+
+\begin{lstlisting}[style=haskell]
+{-# LANGUAGE TypeFamilies #-}
+
+class Container c where
+    type Element c  -- Associated type: the element type of c
+    empty  :: c
+    insert :: Element c -> c -> c
+    toList :: c -> [Element c]
+
+instance Container [a] where
+    type Element [a] = a   -- For lists, the element type is a
+    empty     = []
+    insert    = (:)
+    toList xs = xs
+
+instance Container (Set a) where
+    type Element (Set a) = a
+    empty  = Set.empty
+    insert = Set.insert
+    toList = Set.toList
+\end{lstlisting}
+
+The associated type \code{Element c} is like a type-level function: given the
+container type \code{c}, it computes the element type. This is called a
+\textbf{type family} in Haskell.
+
+\begin{cppconnection}[C++ Concepts and Associated Types]
+C++ has an analog to associated types in the form of \emph{nested type aliases}
+and type traits. C++ concepts can require that a type have specific nested
+types:
+
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+#include <iterator>
+
+// Requires: T has a value_type, a begin() that returns an iterator,
+// and an end() that returns the same iterator type.
+template<typename T>
+concept Container = requires(T t) {
+    typename T::value_type;           // Associated type requirement
+    typename T::iterator;
+    { t.begin() } -> std::same_as<typename T::iterator>;
+    { t.end()   } -> std::same_as<typename T::iterator>;
+    { t.size()  } -> std::convertible_to<std::size_t>;
+};
+
+// Using the concept:
+template<Container C>
+void print_all(const C& c) {
+    for (const typename C::value_type& x : c) {
+        std::cout << x << ' ';
+    }
+}
+\end{lstlisting}
+
+Here \code{typename T::value\_type} plays the role of an associated type:
+the concept requires that the type \code{T} has a nested type alias called
+\code{value\_type}, which will be used to describe the type of elements in
+the container.
+\end{cppconnection}
+
+\subsection{Type Families: Associated Types as Functions on Types}
+
+In Haskell's type family framework, associated types generalize to
+\emph{standalone type functions}:
+
+\begin{lstlisting}[style=haskell]
+{-# LANGUAGE TypeFamilies #-}
+
+-- A type family: a function from types to types
+type family Result a where
+    Result Int    = Double    -- Computing with Int gives Double
+    Result Float  = Float     -- Computing with Float gives Float
+    Result Double = Double    -- Computing with Double gives Double
+
+-- Now a function whose return type depends on its argument type
+compute :: Num a => a -> Result a
+compute x = ...   -- The implementation depends on which case applies
+\end{lstlisting}
+
+Type families are a powerful feature: they allow the \emph{return type} of a
+function to depend on the \emph{value} of its type argument. This starts to
+blur the line between type-level computation and term-level computation ---
+a preview of the dependent types we will meet in later chapters.
+
+\begin{keyinsight}[The Full Power of Constrained Polymorphism]
+The combination of multi-parameter type classes, associated types, and type
+families gives you a remarkably powerful constraint language. You can express:
+\begin{itemize}
+  \item Requirements on multiple related types simultaneously
+  \item Type-level computations that determine output types from input types
+  \item Complex relational constraints between types
+  \item Hierarchies of constraints with inheritance of requirements
+\end{itemize}
+This is not merely convenient syntax. It allows you to precisely specify the
+interface your generic code requires, at the type level, catching errors at
+definition time rather than instantiation time.
+\end{keyinsight}
+
+
+% ============================================================
+\section{Putting It All Together: A Conceptual Map}
+\label{sec:conceptual-map}
+% ============================================================
+
+We have covered a lot of ground. Let us draw the connections together.
+
+The fundamental question of this chapter was: how do you constrain a type
+variable? The answer, in all three traditions, follows the same pattern:
+
+\begin{enumerate}
+  \item \textbf{Name the constraint}: give it an identifier (\code{Eq},
+        \code{Addable}, \code{Comparable}, \code{Sortable})
+  \item \textbf{Define its requirements}: specify what operations a type must
+        provide to satisfy the constraint
+  \item \textbf{Use the constraint in signatures}: write
+        \code{Eq a =>} or \code{template<Addable T>} or \code{T: Eq}
+  \item \textbf{Check the constraint at the call site}: the compiler verifies
+        that the types you actually pass do satisfy the constraint
+  \item \textbf{Use the operations inside the body}: within the function, you
+        can use all the operations that the constraint guarantees
+\end{enumerate}
+
+The differences between the three approaches are in steps 2 and 4:
+\begin{itemize}
+  \item \textbf{Java}: step 2 uses declared interface methods; step 4 checks
+        the class hierarchy.
+  \item \textbf{Haskell}: step 2 uses a class declaration with methods; step 4
+        searches for a matching instance declaration.
+  \item \textbf{C++}: step 2 uses a requires expression testing expression
+        validity; step 4 evaluates the concept predicate.
+\end{itemize}
+
+\begin{tikzpicture}[
+  node distance=2.5cm,
+  box/.style={rectangle, draw, fill=blue!10, rounded corners, text width=3.5cm,
+              align=center, minimum height=1.2cm, font=\small},
+  arrow/.style={->, >=Stealth, thick}
+]
+\node[box] (theory) {Qualified Types\\(Jones 1992)\\$\forall \alpha.\; P(\alpha) \Rightarrow T$};
+\node[box, right=3cm of theory] (fsub)   {System \Fsub\\(Cardelli 1985)\\$\forall \alpha <: B.\; T$};
+\node[box, below=2cm of theory] (haskell) {Haskell\\Type Classes\\(Wadler 1989)};
+\node[box, below=2cm of fsub]   (java)   {Java\\Bounded Generics\\(Bracha 2004)};
+\node[box, below=2cm of haskell] (rust)  {Rust Traits\\(2015)};
+\node[box, below=2cm of java]   (cpp)   {C++20 Concepts\\(Stroustrup 2020)};
+
+\draw[arrow] (theory) -- node[above, font=\tiny] {inspires} (fsub);
+\draw[arrow] (theory) -- (haskell);
+\draw[arrow] (fsub)   -- (java);
+\draw[arrow] (haskell) -- (rust);
+\draw[arrow] (fsub)   -- (cpp);
+\draw[arrow] (haskell) -- node[right, font=\tiny] {influences} (cpp);
+\end{tikzpicture}
+
+The theory of qualified types and System \Fsub{} are the twin pillars on which
+all practical constraint systems are built. Haskell type classes implement the
+qualified-types approach with dictionary passing. Java bounded generics
+implement the \Fsub{} approach with nominal subtyping. Rust traits blend both.
+C++20 concepts take a more syntactic, structural approach but are informed by
+all of the above.
+
+
+% ============================================================
+\section*{Exercises}
+\label{sec:ch12-exercises}
+% ============================================================
+
+\begin{exercise}
+Write a C++20 concept \code{Printable} that requires a type to support
+\code{operator<<} with an \code{std::ostream}. Then write a function
+\code{print\_all} that prints all elements of a \code{std::vector} whose
+element type satisfies \code{Printable}.
+\end{exercise}
+
+\begin{exercise}
+In Haskell, define a type class \code{Container} with an associated type
+\code{Element} and methods \code{insert}, \code{member}, and \code{toList}.
+Write instances for \code{[a]} and \code{Data.Set.Set a} (from the
+\code{containers} package). Write a generic function \code{unique} that removes
+duplicates from any \code{Container} whose \code{Element} type is an
+instance of \code{Eq}.
+\end{exercise}
+
+\begin{exercise}
+In C++20, write two overloaded versions of a function \code{find\_minimum}:
+one that works for any range with a totally ordered element type, and a faster
+version that works for random-access ranges. Use concept subsumption to make
+the compiler automatically pick the right version. Verify (with a static
+assert or a print statement) that the right version is chosen for a
+\code{std::vector} and for a \code{std::list}.
+\end{exercise}
+
+\begin{exercise}
+(Theory) Write out the dictionary-passing translation for the following Haskell
+code by hand:
+\begin{lstlisting}[style=haskell]
+class Describable a where
+    describe :: a -> String
+
+instance Describable Int where
+    describe n = "an integer: " ++ show n
+
+instance Describable a => Describable [a] where
+    describe xs = "a list of " ++ show (length xs) ++ " items"
+
+summarize :: Describable a => [a] -> String
+summarize xs = "Summary: " ++ describe xs
+\end{lstlisting}
+Write out what the compiler generates: the \code{DescribableDict} type, the
+instance values, and the compiled form of \code{summarize}.
+\end{exercise}
+
+\begin{exercise}
+Explore the coherence requirement. In Haskell, what happens if you try to
+define two instances of \code{Eq Int} with different behavior? Why does the
+compiler reject this? What real-world problems would arise if coherence were
+not enforced? Compare with Rust's orphan rules and explain how they enforce
+coherence at the module level.
+\end{exercise}
+
+\begin{exercise}
+(Research) Look up the C++ ranges library (\code{<ranges>}) and find three
+examples where the standard uses concept subsumption to select among overloaded
+algorithms. For each one, identify which concept subsumes which, and explain
+why the more constrained version is preferred.
+\end{exercise}
+
+\begin{exercise}
+Write a Haskell multi-parameter type class \code{Convertible c d} where
+\code{convert :: c -> d}. Provide instances for at least: \\
+\code{Convertible Int Double}, \code{Convertible String [Char]}, and a
+generic instance \code{Convertible a a} (identity conversion). What goes wrong
+with the identity instance and why? How do functional dependencies solve this?
+\end{exercise}
+
+
+% ============================================================
+% Chapter Takeaway
+% ============================================================
+\begin{takeaway}[Chapter 12 Takeaways: Concepts, Constraints, and Bounded Polymorphism]
+
+\textbf{The Core Problem}\\
+Unconstrained polymorphism (\code{template<typename T>} or $\forall \alpha.\,T$)
+allows any type to be substituted --- but most generic functions only work for
+types satisfying certain conditions. Without a way to express these conditions,
+error messages are incomprehensible and function signatures are misleading.
+
+\textbf{Bounded Quantification}\\
+Type theory formalizes the solution as bounded quantification:
+$\forall \alpha <: B.\, T$, where $B$ is a bound that restricts which types
+may be substituted for $\alpha$. System \Fsub{} is the formal system combining
+parametric polymorphism with subtype bounds.
+
+\textbf{Haskell Type Classes}\\
+Type classes define a predicate on types: a named set of required operations.
+Instance declarations prove that specific types satisfy a class. The compiler
+implements type classes via dictionary passing, threading implicit records of
+method implementations through the call stack. Coherence (at most one instance
+per type) is essential for correctness.
+
+\textbf{Qualified Types}\\
+Jones's qualified types framework formalizes type class constraints as
+predicates in the type signature: $\forall \alpha.\, P(\alpha) \Rightarrow T$.
+Instance resolution is proof search in a predicate logic. This framework unifies
+type class systems across languages and explains coherence as a logical
+uniqueness requirement.
+
+\textbf{C++20 Concepts}\\
+Concepts are compile-time Boolean predicates on types, checked structurally:
+if the required expressions compile and have the required types, the type
+satisfies the concept. Requires expressions give four kinds of requirements
+(simple, type, compound, nested). Concepts dramatically improve error messages
+and enable constraint-based overloading via subsumption.
+
+\textbf{Subsumption and Overloading}\\
+If concept $P$ subsumes concept $Q$ (i.e., $P$ logically implies $Q$), then
+a function constrained by $P$ is more specific than one constrained by $Q$.
+The compiler picks the most constrained applicable overload --- a form of
+specialization driven by constraint implication rather than class hierarchy.
+
+\textbf{Rust Traits}\\
+Rust traits combine explicit instance declarations (like Haskell) with
+structural checking (like concepts). Orphan rules enforce coherence at the
+module level. Associated types express relationships between types. Blanket
+implementations allow traits to be implemented generically for families of types.
+
+\textbf{Multi-Parameter Type Classes and Type Families}\\
+Single-parameter type classes express properties of one type. Multi-parameter
+type classes and associated types (type families) express \emph{relationships}
+between types and allow type-level computation. This moves toward dependent
+types, previewing the ideas in the final chapters of this book.
+
+\textbf{The Unified View}\\
+All constraint systems --- type classes, concepts, traits, bounded generics ---
+are implementations of the same idea: give a name to a predicate on types,
+declare which types satisfy it, use predicates in function signatures, and
+check predicates at call sites. The differences are in how satisfaction is
+declared (nominal vs.\ structural) and how coherence is enforced.
+\end{takeaway}

@@ -1,0 +1,35 @@
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.idx
+*.ind
+*.ilg
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+*.nav
+*.snm
+*.vrb
+*.lof
+*.lot
+*.lol
+*.bcf
+*.run.xml
+*.dvi
+*.ps
+*.xdv
+*.glg
+*.glo
+*.gls
+
+# Output PDF (built by CI)
+book/main.pdf
+book/main\ -\ Copy.pdf
+
+# Claude settings
+.claude/

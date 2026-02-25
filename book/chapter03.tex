@@ -1,0 +1,1190 @@
+﻿\chapter{Type Constructors --- Building New Types from Old}
+\label{ch:type-constructors}
+
+\begin{keyinsight}[Chapter Goal]
+The real power of a type system does not come from having a fixed list of types. It comes from having mechanisms that \emph{build} new types out of existing ones. In this chapter, we uncover those mechanisms ---'' called \textbf{type constructors} ---'' and show that they are, at their core, simply \emph{functions operating at the level of types}. By the end, you will see that C++ templates, Haskell type parameters, and the formal notation of type theory are all describing the exact same idea from different angles.
+\end{keyinsight}
+
+\section{From Values to Types: A Step Up the Ladder}
+\label{sec:step-up}
+
+In the previous two chapters we talked about what a type \emph{is} and cataloged the basic, ground-level types: \typename{int}, \typename{bool}, \typename{char}, \Bool, \Nat, \Unit, \Void. These are the atomic building blocks. They exist ``for free''; you do not have to construct them from anything simpler.
+
+But real programs almost never consist purely of integers and booleans. You write things like:
+
+\begin{lstlisting}[style=cpp]
+std::vector<int>            // a sequence of integers
+std::pair<std::string, int> // a name paired with an age
+std::optional<double>       // a double that might be missing
+std::map<std::string, int>  // a dictionary from strings to ints
+std::function<int(bool)>    // a function from bool to int
+\end{lstlisting}
+
+Each of those is a \emph{type}, but none of them is primitive. Each one was \emph{built} from other types by applying some kind of construction process. That construction process is what we call a \textbf{type constructor}.
+
+\begin{intuition}
+Think of it this way. In ordinary mathematics, a function takes a value and produces a value: $f : \mathbb{R} \to \mathbb{R}$. A type constructor is one level higher: it takes a \emph{type} and produces a \emph{type}. It is a function whose domain and codomain are both the universe of types, not the universe of values.
+\end{intuition}
+
+This single idea --- that types can be the inputs and outputs of functions --- is one of the central organizing principles of type theory, and once you internalize it, everything else in this chapter (and much of the rest of the book) will feel natural.
+
+\section{What Is a Type Constructor?}
+\label{sec:what-is-type-constructor}
+
+\begin{definition}[Type Constructor]
+\label{def:type-constructor}
+A \textbf{type constructor} is a mapping that takes zero or more types as arguments and returns a type. If it takes $n$ type arguments, we call it an \textbf{$n$-ary type constructor}.
+\end{definition}
+
+Let us be completely concrete about this. Suppose we have a type constructor called $F$ that takes one type argument. Then:
+
+\begin{itemize}
+  \item $F$ by itself is \emph{not} a type. It is an \emph{incomplete} expression, just like the function $f(x) = x^2$ is not a number until you supply a value for $x$.
+  \item $F(\mathsf{Int})$ \emph{is} a type. You applied $F$ to the concrete type $\mathsf{Int}$ and got a concrete type back.
+  \item $F(\mathsf{Bool})$ is a different concrete type.
+  \item $F(F(\mathsf{Int}))$ is yet another type --- you applied $F$ twice, nesting the result.
+\end{itemize}
+
+\begin{keyinsight}[The Cookie Cutter Analogy]
+A type constructor is like a cookie cutter, not like a cookie. The cookie cutter \typename{vector} is a tool --- a mold. The cookies are \typename{vector<int>}, \typename{vector<string>}, \typename{vector<pair<int,bool>{}>}. You cannot eat a cookie cutter. You cannot store a value ``in a \typename{vector}'' --- you store values in \typename{vector<int>} or \typename{vector<string>}. The type constructor itself is not a type; it is a \emph{recipe} for making types.
+\end{keyinsight}
+
+This is an important distinction that trips up many programmers the first time they encounter it. In C++, the error message \texttt{error: use of class template 'vector' requires template arguments} is literally the compiler telling you: ``You gave me a type constructor where I expected a type. Please finish applying it.''
+
+\subsection{Formal Notation}
+
+When type theory books write about type constructors, they use notation borrowed from function types. If $F$ is a type constructor that takes one type and produces a type, they write:
+
+\[
+  F : \Type \to \Type
+\]
+
+This reads: ``$F$ is a function from the universe of types to the universe of types.'' The symbol $\Type$ here stands for ``the collection of all types'' (we will discuss some subtleties of this in later chapters; for now, treat it informally).
+
+For a binary type constructor $G$ that takes two types:
+
+\[
+  G : \Type \times \Type \to \Type
+\]
+
+or equivalently (using currying, which we will explain in Section~\ref{sec:function-type-constructor}):
+
+\[
+  G : \Type \to \Type \to \Type
+\]
+
+For a concrete type like \Bool\ that takes no arguments:
+
+\[
+  \Bool : \Type
+\]
+
+$\Bool$ \emph{is} a type, not a function on types. Its ``arity'' as a type constructor is zero.
+
+\section{Nullary Type Constructors: Types That Stand Alone}
+\label{sec:nullary}
+
+Let us start at the bottom of the hierarchy: type constructors that take \emph{no} arguments.
+
+\begin{definition}[Nullary Type Constructor]
+A \textbf{nullary type constructor} takes zero type arguments and produces a type. Equivalently, it simply \emph{is} a type. Examples: \Bool, \Nat, \Unit, \Void, \typename{int}, \typename{char}, \typename{double}, \typename{std::nullptr\_t}.
+\end{definition}
+
+You might wonder: why bother calling these ``type constructors'' at all if they take no arguments? The answer is that it unifies the picture. When we develop the theory of \emph{kinds} in Section~\ref{sec:kinds}, we will want to talk uniformly about all type-level entities. Saying ``a nullary type constructor'' is just a precise way of saying ``a type.''
+
+In Haskell's type-level language, \typename{Int}, \typename{Bool}, \typename{Char} are all nullary type constructors. In C++, \typename{int}, \typename{bool}, \typename{char} are the same idea.
+
+\begin{example}[Nullary Type Constructors]
+\begin{lstlisting}[style=cpp]
+// All of these are types -- nullary type constructors
+int
+bool
+char
+double
+std::nullptr_t
+
+// You can declare variables of these types directly:
+int x = 42;
+bool flag = true;
+\end{lstlisting}
+
+\begin{lstlisting}[style=haskell]
+-- In Haskell, same idea:
+-- Int, Bool, Char are types (nullary type constructors)
+x :: Int
+x = 42
+
+flag :: Bool
+flag = True
+\end{lstlisting}
+\end{example}
+
+\section{Unary Type Constructors: One Type In, One Type Out}
+\label{sec:unary}
+
+Now things get interesting. A \textbf{unary type constructor} takes exactly one type and produces a new type. This is the most common kind you encounter in everyday programming.
+
+\begin{definition}[Unary Type Constructor]
+A \textbf{unary type constructor} is a mapping $F : \Type \to \Type$. Given any type $A$, it produces a new type $F(A)$, often written $F\ A$ or \texttt{F<A>} in C++.
+\end{definition}
+
+Here is a table of familiar examples:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Type Constructor} & \textbf{Applied to} & \textbf{Result Type} \\
+\midrule
+\typename{vector} & \typename{int} & \typename{vector<int>} \\
+\typename{vector} & \typename{string} & \typename{vector<string>} \\
+\typename{optional} & \typename{double} & \typename{optional<double>} \\
+\typename{unique\_ptr} & \typename{Widget} & \typename{unique\_ptr<Widget>} \\
+\typename{shared\_ptr} & \typename{Node} & \typename{shared\_ptr<Node>} \\
+\typename{list} & \typename{char} & \typename{list<char>} \\
+\typename{set} & \typename{int} & \typename{set<int>} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Each row reads: ``the type constructor (column 1) applied to the type (column 2) gives the type (column 3).''
+
+\begin{keyinsight}[Types Are Values at the Type Level]
+When you write \code{vector<int>} in C++, you are literally \emph{applying} the type constructor \typename{vector} to the type \typename{int}. This is function application --- it just happens to live one level up from ordinary value-level function application. The arrow in $F : \Type \to \Type$ is the same arrow as in $f : \mathsf{Int} \to \mathsf{Int}$; only the level differs.
+\end{keyinsight}
+
+\subsection{A Closer Look: \typename{optional} as ``Maybe There Is One''}
+
+The \typename{std::optional<T>} type constructor is worth spending a moment on, because it has a beautiful type-theoretic interpretation that we will revisit in Section~\ref{sec:sum-types}.
+
+Intuitively, \typename{optional<T>} represents a value that is \emph{either} a \typename{T} \emph{or} nothing. So \typename{optional<int>} is: either an integer exists, or it does not. This is exactly the type $\mathsf{Int} + \Unit$ --- a sum of \typename{int} and the unit type (which has exactly one value, representing ``no value here''). We will formalize this shortly.
+
+For now, just appreciate that \typename{optional} is one of the most useful unary type constructors in C++ precisely because it captures a pattern --- ``might be missing'' --- that comes up constantly.
+
+\begin{lstlisting}[style=cpp]
+#include <optional>
+#include <string>
+
+// optional<T> is the type constructor applied to T
+std::optional<int>    age_if_known;
+std::optional<std::string> name_if_provided;
+
+// The type constructor is the same; the argument types differ
+// optional : Type -> Type
+\end{lstlisting}
+
+\section{Binary and N-ary Type Constructors}
+\label{sec:nary}
+
+Some type constructors take more than one type argument.
+
+\begin{definition}[Binary Type Constructor]
+A \textbf{binary type constructor} is a mapping $G : \Type \times \Type \to \Type$. It takes two types $A$ and $B$ and produces the type $G(A, B)$.
+\end{definition}
+
+Classic examples in C++:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\textbf{Constructor} & \textbf{Arg 1} & \textbf{Arg 2} & \textbf{Result} \\
+\midrule
+\typename{pair} & \typename{int} & \typename{string} & \typename{pair<int, string>} \\
+\typename{map} & \typename{string} & \typename{int} & \typename{map<string, int>} \\
+\typename{unordered\_map} & \typename{int} & \typename{double} & \typename{unordered\_map<int, double>} \\
+\typename{function} & \typename{int} & \typename{bool} & \typename{function<bool(int)>} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+And in mathematics, the two most fundamental binary type constructors are the \textbf{product} $\times$ and the \textbf{sum} $+$:
+
+\[
+  (\times) : \Type \times \Type \to \Type \qquad\qquad (+) : \Type \times \Type \to \Type
+\]
+
+These are so important they get their own deep-dive sections below.
+
+\subsection{N-ary Type Constructors: Variadic Templates}
+
+What about \typename{std::tuple}? A tuple can hold any number of types:
+
+\begin{lstlisting}[style=cpp]
+std::tuple<int>                    // one type
+std::tuple<int, string>            // two types
+std::tuple<int, string, double>    // three types
+std::tuple<bool, char, int, float> // four types
+\end{lstlisting}
+
+This is an \emph{n-ary} or \emph{variadic} type constructor. In C++, it is expressed using parameter packs:
+
+\begin{lstlisting}[style=cpp]
+template<typename... Ts>
+class tuple { /* ... */ };
+// tuple : Type^n -> Type  for any n >= 0
+\end{lstlisting}
+
+In type theory, variadic type constructors can be understood as iterating binary constructors. A three-tuple $A \times B \times C$ is really just $(A \times B) \times C$ or $A \times (B \times C)$ --- they are isomorphic. We will come back to this associativity property.
+
+\section{Deep Dive: The Product Type Constructor ($\times$)}
+\label{sec:product-types}
+
+The product type constructor is, along with the sum and function constructors, one of the three \emph{universal} type constructors from which essentially all other compound types can be built.
+
+\begin{definition}[Product Type]
+Given types $A$ and $B$, the \textbf{product type} $A \times B$ is the type whose values are pairs $(a, b)$ where $a : A$ and $b : B$. The type constructor $(\times) : \Type \to \Type \to \Type$ is called the \textbf{product type constructor}.
+\end{definition}
+
+\subsection{Why ``Product''?}
+
+The name comes from a counting argument. If $A$ has $m$ values and $B$ has $n$ values, then $A \times B$ has $m \times n$ values --- every value of $A$ paired with every value of $B$. For example, $\Bool \times \Bool$ has $2 \times 2 = 4$ values: $(\mathsf{true}, \mathsf{true})$, $(\mathsf{true}, \mathsf{false})$, $(\mathsf{false}, \mathsf{true})$, $(\mathsf{false}, \mathsf{false})$.
+
+\begin{example}[Counting Product Types]
+\[
+|\Bool \times \Bool| = 2 \times 2 = 4
+\]
+\[
+|\Bool \times \Unit| = 2 \times 1 = 2 \qquad \text{(so } \Bool \times \Unit \cong \Bool\text{)}
+\]
+\[
+|\Bool \times \Void| = 2 \times 0 = 0 \qquad \text{(so } \Bool \times \Void \cong \Void\text{)}
+\]
+
+These counting equalities correspond to real type isomorphisms: types with the same number of values (in a finite setting) can be mapped bijectively onto each other.
+\end{example}
+
+\subsection{Introduction: How to Create a Product Value}
+
+In type theory, we distinguish two kinds of rules for each type:
+
+\begin{itemize}
+  \item \textbf{Introduction rules} (also called \emph{constructors}): how to \emph{create} or \emph{build} a value of the type.
+  \item \textbf{Elimination rules} (also called \emph{destructors} or \emph{eliminators}): how to \emph{use} or \emph{consume} a value of the type to get something out of it.
+\end{itemize}
+
+For the product type $A \times B$, the introduction rule is:
+
+\[
+  \frac{a : A \qquad b : B}{(a, b) : A \times B} \quad (\times\text{-intro})
+\]
+
+Read this as: ``If I have a term $a$ of type $A$ and a term $b$ of type $B$, then I can form the pair $(a, b)$, which has type $A \times B$.'' The horizontal line separates premises (top) from conclusion (bottom).
+
+In C++:
+
+\begin{lstlisting}[style=cpp]
+// Introduction: building a pair
+std::pair<int, std::string> p = std::make_pair(42, "hello");
+// Or with brace initialization:
+std::pair<int, std::string> q = {42, "hello"};
+// Or via direct construction:
+auto r = std::pair<int, std::string>{42, "hello"};
+\end{lstlisting}
+
+\subsection{Elimination: How to Use a Product Value}
+
+The elimination rules for $A \times B$ are the two \textbf{projection functions}:
+
+\[
+  \pi_1 : A \times B \to A \qquad\qquad \pi_2 : A \times B \to B
+\]
+
+Formally:
+
+\[
+  \frac{p : A \times B}{\pi_1(p) : A} \quad (\times\text{-elim}_1) \qquad\qquad
+  \frac{p : A \times B}{\pi_2(p) : B} \quad (\times\text{-elim}_2)
+\]
+
+And a compatibility rule (the \emph{computation rule} or \emph{beta rule}):
+
+\[
+  \pi_1(a, b) \equiv a \qquad\qquad \pi_2(a, b) \equiv b
+\]
+
+This says: if you build a pair and then immediately project out a component, you get back what you put in. That should be completely unsurprising --- it is the definition of projection.
+
+In C++:
+
+\begin{lstlisting}[style=cpp]
+std::pair<int, std::string> p = {42, "hello"};
+
+// Elimination via projections:
+int    first  = p.first;   // pi_1(p)
+std::string second = p.second;  // pi_2(p)
+
+// Or for tuples (n-ary product):
+std::tuple<int, std::string, double> t = {1, "world", 3.14};
+int    a = std::get<0>(t);  // pi_1(t)
+std::string b = std::get<1>(t);  // pi_2(t)
+double c = std::get<2>(t);  // pi_3(t)
+\end{lstlisting}
+
+\subsection{Structs Are Products in Disguise}
+
+Here is a crucial insight: every \typename{struct} in C++ is a product type. The fields are just named projections.
+
+\begin{lstlisting}[style=cpp]
+struct Person {
+    std::string name;  // pi_1
+    int         age;   // pi_2
+    double      height; // pi_3
+};
+
+// Person is exactly: string x int x double
+// The field names 'name', 'age', 'height' are just
+// user-friendly aliases for the projections pi_1, pi_2, pi_3.
+
+Person alice = {"Alice", 30, 1.65};
+std::string n = alice.name;    // pi_1(alice)
+int         a = alice.age;     // pi_2(alice)
+double      h = alice.height;  // pi_3(alice)
+\end{lstlisting}
+
+\begin{cppconnection}[Structs as Named Product Types]
+In C++, \typename{struct} is just syntactic sugar for a product type with named fields. The struct
+\begin{lstlisting}[style=cpp]
+struct Point { double x; double y; };
+\end{lstlisting}
+is, from the type theory perspective, the type $\mathsf{double} \times \mathsf{double}$ with the projections renamed from $\pi_1, \pi_2$ to \code{x}, \code{y}. The naming is a convenience; the mathematical content is the product.
+\end{cppconnection}
+
+\subsection{The Universal Property of Products}
+
+There is a deeper characterization of the product type that you will encounter if you study category theory: the product is characterized by its \emph{universal property}. Informally:
+
+\begin{keyinsight}[Universal Property of Products]
+$A \times B$ is the type such that giving a function $f : C \to A \times B$ is \emph{exactly the same} as giving a pair of functions $f_1 : C \to A$ and $f_2 : C \to B$. In other words, the pair of projections $(\pi_1, \pi_2)$ is the ``most efficient'' way to extract both components.
+
+Formally: there is a bijection
+\[
+  \mathrm{Hom}(C,\, A \times B) \;\cong\; \mathrm{Hom}(C, A) \times \mathrm{Hom}(C, B)
+\]
+This uniquely characterizes the product (up to isomorphism).
+\end{keyinsight}
+
+We will not need this immediately, but keep it in the back of your mind. In Chapter~\ref{ch:categories} (when we study category theory), it will reappear as the definition of a \emph{categorical product}.
+
+\section{Deep Dive: The Sum Type Constructor ($+$)}
+\label{sec:sum-types}
+
+The sum type constructor is in some sense the ``dual'' of the product. Where a product requires values of \emph{both} types simultaneously, a sum holds a value of \emph{exactly one} of the types.
+
+\begin{definition}[Sum Type / Coproduct]
+Given types $A$ and $B$, the \textbf{sum type} $A + B$ (also called \textbf{coproduct} or \textbf{disjoint union}) is the type whose values are either a value of $A$ tagged as ``left'', or a value of $B$ tagged as ``right''. The type constructor $(+) : \Type \to \Type \to \Type$ is called the \textbf{sum type constructor}.
+\end{definition}
+
+\subsection{Why ``Sum''?}
+
+Again, the name is cardinality-based. If $A$ has $m$ values and $B$ has $n$ values, then $A + B$ has $m + n$ values:
+
+\[
+  |\Bool + \Bool| = 2 + 2 = 4
+\]
+\[
+  |A + \Void| = |A| + 0 = |A| \qquad \text{(so } A + \Void \cong A\text{)}
+\]
+\[
+  |A + \Unit| = |A| + 1 \qquad \text{(one more value than } A \text{ alone)}
+\]
+
+That last equation is the secret behind \typename{std::optional<A>}: it is literally $A + \Unit$, meaning ``a value of $A$, or the single unit value representing absence.''
+
+\subsection{Introduction: Injections}
+
+The introduction rules for $A + B$ are two \textbf{injection} functions:
+
+\[
+  \mathsf{inl} : A \to A + B \qquad\qquad \mathsf{inr} : B \to A + B
+\]
+
+Formally:
+
+\[
+  \frac{a : A}{\mathsf{inl}(a) : A + B} \quad (+\text{-intro}_L) \qquad\qquad
+  \frac{b : B}{\mathsf{inr}(b) : A + B} \quad (+\text{-intro}_R)
+\]
+
+The names \textbf{inl} and \textbf{inr} stand for ``inject left'' and ``inject right.'' When you place a value of type $A$ into $A + B$, you tag it as the left variant. When you place a value of type $B$, you tag it as the right variant. The tags are crucial: they are what let you later figure out which case you are in.
+
+\begin{lstlisting}[style=cpp]
+#include <variant>
+#include <string>
+
+// std::variant<A, B> is C++'s sum type A + B
+using Result = std::variant<int, std::string>;
+
+// inl: inject an int (the left type)
+Result r1 = 42;            // holds an int
+
+// inr: inject a string (the right type)
+Result r2 = std::string("error occurred");  // holds a string
+
+// Both r1 and r2 have type Result = variant<int, string>
+// But they contain different alternative types
+\end{lstlisting}
+
+\subsection{Elimination: Pattern Matching}
+
+Here is the key insight about sum types: to use a value of type $A + B$, you must handle \emph{both} cases. You cannot pretend the value is definitely an $A$ --- it might be a $B$. This is why sum types eliminate via \textbf{case analysis} (pattern matching):
+
+\[
+  \frac{p : A + B \qquad f : A \to C \qquad g : B \to C}{\mathsf{case}(p,\, f,\, g) : C} \quad (+\text{-elim})
+\]
+
+Read this as: ``Given a value $p : A + B$, a function $f$ that handles the left case (producing a $C$), and a function $g$ that handles the right case (also producing a $C$), we get a value of type $C$.'' The key is that $f$ and $g$ must agree on the output type: you are choosing how to produce a $C$ regardless of which variant was stored.
+
+In C++, the way to eliminate a \typename{std::variant} is \typename{std::visit}:
+
+\begin{lstlisting}[style=cpp]
+#include <variant>
+#include <string>
+#include <iostream>
+
+using Result = std::variant<int, std::string>;
+
+void describe(const Result& r) {
+    // std::visit is the eliminator for variant (sum types)
+    std::visit([](auto&& val) {
+        using T = std::decay_t<decltype(val)>;
+        if constexpr (std::is_same_v<T, int>) {
+            std::cout << "Got an integer: " << val << "\n";
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            std::cout << "Got a string: " << val << "\n";
+        }
+    }, r);
+}
+
+// Better style: overloaded visitor
+template<class... Ts>
+struct overloaded : Ts... { using Ts::operator()...; };
+template<class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
+void describe_v2(const Result& r) {
+    std::visit(overloaded{
+        [](int i)               { std::cout << "int: " << i << "\n"; },
+        [](const std::string& s){ std::cout << "str: " << s << "\n"; }
+    }, r);
+}
+\end{lstlisting}
+
+The overloaded visitor pattern in C++ is the closest thing C++ has to true pattern matching. You provide one function per alternative, and \typename{std::visit} dispatches to the correct one at runtime.
+
+\begin{warning}[Sum Types Require Exhaustive Handling]
+The mathematical elimination rule $\mathsf{case}(p, f, g)$ requires a handler for \emph{every} alternative. This is not accidental: it is a fundamental requirement for type safety. If you could use a \typename{variant<int, string>} as if it were always an \typename{int}, you would have undefined behavior when it actually holds a \typename{string}.
+
+This is why well-designed languages with sum types (Rust, Haskell, OCaml) enforce exhaustive pattern matching at compile time. In C++, \typename{std::visit} enforces this too --- your visitor must handle all alternatives or the code will not compile.
+\end{warning}
+
+\subsection{\typename{std::optional} as $A + \Unit$}
+
+We claimed earlier that \typename{optional<A>} is $A + \Unit$. Let us make this precise:
+
+\begin{lstlisting}[style=cpp]
+// optional<A> conceptually:
+//   Either we have an A (the "Some" case)
+//   Or we have nothing (the "None" case -- unit)
+
+std::optional<int> val = 42;    // inl(42)   -- has a value
+std::optional<int> none = {};   // inr(())   -- no value (unit)
+
+// Elimination: must handle both cases
+if (val.has_value()) {
+    int x = val.value();  // use the int
+    std::cout << x;
+} else {
+    // handle the "none" case
+    std::cout << "no value";
+}
+
+// Or with value_or (a limited eliminator):
+int x = val.value_or(0);  // case(val, id, const 0)
+\end{lstlisting}
+
+\begin{keyinsight}[{\texttt{optional\textless A\textgreater} = A + Unit}]
+This isomorphism is not a coincidence or a cute observation. It is a precise mathematical fact:
+\[
+  \typename{optional}\langle A\rangle \;\cong\; A + \Unit
+\]
+The \typename{nullopt} value corresponds to the unique inhabitant of $\Unit$ injected on the right. Every ``just $x$'' for $x : A$ corresponds to $\mathsf{inl}(x)$. The optional type constructor is just the sum type constructor with $\Unit$ hardcoded as the second argument. Similarly, \typename{variant<A, B, C>} is $A + B + C$, where the nesting is left-associative: $(A + B) + C$.
+\end{keyinsight}
+
+\subsection{Enumerations as Sum Types}
+
+Enumeration types are also sum types, just with very simple component types:
+
+\begin{lstlisting}[style=cpp]
+// An enum is a sum of unit types
+enum class Direction { North, South, East, West };
+// Direction = Unit + Unit + Unit + Unit  (four alternatives)
+// Each "Unit" represents one tag: North, South, East, West
+
+// A tagged union / discriminated union is the general form:
+enum class ShapeKind { Circle, Rectangle, Triangle };
+
+struct Shape {
+    ShapeKind kind;
+    union {
+        struct { double radius; };
+        struct { double width, height; };
+        struct { double base, height2; };
+    };
+};
+// Shape = (Unit x double) + (Unit x double x double) + ...
+// i.e., a sum of product types
+\end{lstlisting}
+
+In type theory, the combination of sums of products is so important it has a name: \emph{algebraic data types} (ADTs). We will explore these deeply in Chapter~\ref{ch:algebraic-data-types}.
+
+\section{Deep Dive: The Function Type Constructor ($\to$)}
+\label{sec:function-type-constructor}
+
+The third fundamental type constructor is the function type. Given types $A$ and $B$, we can form the type $A \to B$: the type of all functions from $A$ to $B$.
+
+\begin{definition}[Function Type]
+Given types $A$ and $B$, the \textbf{function type} $A \to B$ is the type whose values are functions that take an input of type $A$ and produce an output of type $B$. The type constructor $(\to) : \Type \to \Type \to \Type$ is the \textbf{function type constructor}, also called the \textbf{exponential type constructor}.
+\end{definition}
+
+\subsection{Why ``Exponential''?}
+
+The cardinality explanation: if $|A| = m$ and $|B| = n$, then the number of distinct functions from $A$ to $B$ is $n^m = |B|^{|A|}$. Hence the alternative name ``exponential type.''
+
+\[
+  |\Bool \to \Bool| = 2^2 = 4
+\]
+Those four functions are: always-true, always-false, identity, and negation.
+
+\[
+  |\mathsf{Bit3} \to \Bool| = 2^8 = 256
+\]
+There are 256 distinct boolean functions of 8 bits. (This is related to the 256 possible truth tables for 8-input boolean circuits.)
+
+\subsection{Introduction: Lambda Abstraction}
+
+The introduction rule for the function type is \textbf{lambda abstraction}:
+
+\[
+  \frac{x : A \vdash t : B}{\lambda x.\, t \;:\; A \to B} \quad (\to\text{-intro})
+\]
+
+Read: ``If, assuming $x$ has type $A$, we can show that $t$ has type $B$, then the expression $\lambda x.\, t$ (the function that takes $x$ and returns $t$) has type $A \to B$.''
+
+In C++:
+
+\begin{lstlisting}[style=cpp]
+// Lambda abstraction -- introduction of function type
+auto double_it = [](int x) -> int { return x * 2; };
+// double_it : int -> int   (well, std::function<int(int)> in C++ terms)
+
+auto greet = [](std::string name) -> std::string {
+    return "Hello, " + name + "!";
+};
+// greet : string -> string
+
+// std::function wraps the function type:
+std::function<int(int)>             f1 = [](int x){ return x*2; };
+std::function<bool(int, int)>       f2 = [](int a, int b){ return a < b; };
+std::function<std::string(std::string)> f3 = greet;
+\end{lstlisting}
+
+\subsection{Elimination: Function Application}
+
+The elimination rule for the function type is \textbf{function application}:
+
+\[
+  \frac{f : A \to B \qquad a : A}{f(a) : B} \quad (\to\text{-elim})
+\]
+
+``If $f$ has type $A \to B$ and $a$ has type $A$, then applying $f$ to $a$ gives a result of type $B$.''
+
+In C++:
+
+\begin{lstlisting}[style=cpp]
+auto double_it = [](int x) -> int { return x * 2; };
+
+// Function application -- elimination of function type
+int result = double_it(21);  // f(a) where f : int->int, a : int
+// result : int
+
+// You can pass functions to functions:
+auto apply_twice = [](auto f, auto x) { return f(f(x)); };
+int four_x = apply_twice(double_it, 5);  // double_it(double_it(5)) = 20
+\end{lstlisting}
+
+\subsection{Currying: Binary Functions as Iterated Unary Functions}
+\label{sec:currying}
+
+One of the most elegant facts about function types is that a binary function $A \times B \to C$ is \emph{equivalent} to a function $A \to (B \to C)$: a function that takes an $A$ and returns \emph{another function} that takes a $B$ and returns a $C$.
+
+This equivalence is called \textbf{currying}, after the logician Haskell Curry:
+
+\[
+  (A \times B \to C) \;\cong\; (A \to B \to C)
+\]
+
+In C++:
+
+\begin{lstlisting}[style=cpp]
+// Uncurried form: takes both arguments at once
+auto add_pair = [](std::pair<int,int> p) {
+    return p.first + p.second;
+};
+// add_pair : (int x int) -> int
+
+// Curried form: takes one argument, returns a function
+auto add = [](int a) {
+    return [a](int b) { return a + b; };
+};
+// add : int -> (int -> int)
+
+// Using the curried version:
+auto add5 = add(5);   // add5 : int -> int
+int nine   = add5(4); // 9
+int eleven = add(6)(5); // 11, direct application
+
+// std::bind does partial application (a weaker form of currying):
+#include <functional>
+auto add10 = std::bind(std::plus<int>{}, 10, std::placeholders::_1);
+int twenty = add10(10); // 20
+\end{lstlisting}
+
+Currying is central to functional programming --- in Haskell, \emph{all} multi-argument functions are actually curried by default. We will explore this in detail when we discuss the lambda calculus in Chapter~\ref{ch:lambda-calculus}.
+
+\section{Introduction and Elimination Rules: The Universal Pattern}
+\label{sec:intro-elim}
+
+We have now seen introduction and elimination rules for three type constructors: products, sums, and functions. Let us step back and see the pattern.
+
+\begin{keyinsight}[The Introduction/Elimination Pattern]
+Every type constructor in type theory is defined by a set of:
+\begin{enumerate}
+  \item \textbf{Introduction rules}: how to \emph{build} values of the type. These correspond to \emph{constructors} in programming.
+  \item \textbf{Elimination rules}: how to \emph{use} values of the type. These correspond to \emph{destructors} or \emph{pattern matching} or \emph{field access} in programming.
+  \item \textbf{Computation rules} (beta rules): what happens when you immediately eliminate what you just introduced. These ensure that the two operations are inverses.
+  \item \textbf{Uniqueness rules} (eta rules): a value is completely determined by its eliminations. For a pair $p : A \times B$, we always have $p \equiv (\pi_1(p), \pi_2(p))$.
+\end{enumerate}
+This pattern is not a coincidence. It is the \emph{correct} way to define any type constructor, and it ensures that the type system is logically consistent.
+\end{keyinsight}
+
+Let us put the three constructors side by side:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{llll}
+\toprule
+\textbf{Type} & \textbf{Introduction} & \textbf{Elimination} & \textbf{Beta Rule} \\
+\midrule
+$A \times B$ & $(a, b)$ where $a:A$, $b:B$ & $\pi_1, \pi_2$ & $\pi_i(a,b) \equiv x_i$ \\
+$A + B$ & $\mathsf{inl}(a)$ or $\mathsf{inr}(b)$ & $\mathsf{case}(p, f, g)$ & $\mathsf{case}(\mathsf{inl}(a),f,g) \equiv f(a)$ \\
+$A \to B$ & $\lambda x.\, t$ & $f(a)$ & $(\lambda x.\,t)(a) \equiv t[a/x]$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The notation $t[a/x]$ in the last row means ``substitute $a$ for $x$ in $t$'' --- this is the beta reduction rule from the lambda calculus, which we will study in detail later.
+
+\begin{example}[Reading Introduction and Elimination Together]
+Suppose we have a function $\mathsf{swap} : A \times B \to B \times A$ that swaps the components of a pair. Let us write it using the formal rules:
+
+\[
+  \mathsf{swap} \;=\; \lambda p.\, (\pi_2(p),\, \pi_1(p))
+\]
+
+Here:
+\begin{itemize}
+  \item $\lambda p.\, \cdots$ is the introduction rule for the function type ($\to$-intro).
+  \item $\pi_2(p)$ and $\pi_1(p)$ are the elimination rules for the product type ($\times$-elim).
+  \item The outer $(\cdots, \cdots)$ is the introduction rule for the product type ($\times$-intro).
+\end{itemize}
+
+In C++:
+\begin{lstlisting}[style=cpp]
+template<typename A, typename B>
+std::pair<B, A> swap_pair(std::pair<A, B> p) {
+    return {p.second, p.first};
+    // {p.second, p.first} : pair<B,A> -- product introduction
+    // p.second             : B         -- pi_2 elimination
+    // p.first              : A         -- pi_1 elimination
+}
+\end{lstlisting}
+\end{example}
+
+\section{Composing Type Constructors}
+\label{sec:composition}
+
+One of the most powerful aspects of type constructors is that they \emph{compose}. You can apply one type constructor to the result of another, building up arbitrarily complex types.
+
+\begin{example}[Composed Type Constructors in C++]
+\begin{lstlisting}[style=cpp]
+// vector<pair<string, int>>
+// = vector applied to (pair applied to (string, int))
+// In formal notation: List(String x Int)
+std::vector<std::pair<std::string, int>> word_counts;
+
+// optional<vector<T>>
+// = optional applied to (vector applied to T)
+// = (List(T)) + Unit
+std::optional<std::vector<int>> maybe_numbers;
+
+// map<string, vector<pair<int, bool>>>
+// = Map(String, List(Int x Bool))
+std::map<std::string, std::vector<std::pair<int, bool>>> complex_map;
+
+// function<optional<int>(string)>
+// = (String -> (Int + Unit))
+std::function<std::optional<int>(std::string)> parse_int;
+// parse_int takes a string and either successfully returns an int,
+// or returns nullopt if the string is not a valid integer
+\end{lstlisting}
+\end{example}
+
+The key observation is that type constructor composition is just \emph{function composition at the type level}. If $F : \Type \to \Type$ and $G : \Type \to \Type$, then their composition $F \circ G : \Type \to \Type$ maps a type $A$ to $F(G(A))$.
+
+\begin{lstlisting}[style=haskell]
+-- In Haskell, this is particularly clean:
+type ListOfPairs a b = [( a, b)]     -- List applied to (pair of a, b)
+type MaybeList  a   = Maybe [a]      -- Maybe applied to (List applied to a)
+type EitherList a b = Either a [b]   -- Either a (List b)
+
+-- Composing functors:
+newtype Compose f g a = Compose { getCompose :: f (g a) }
+-- Compose Maybe [] Int  =  Maybe [Int]
+-- Compose [] Maybe Bool =  [Maybe Bool]
+\end{lstlisting}
+
+\begin{keyinsight}[Composition Builds Complexity from Simplicity]
+The entire type system of a language like Haskell or Rust is built from just a handful of primitive type constructors ($\times$, $+$, $\to$, and a few others) composed in infinitely many ways. The richness of the type system does not come from having many primitives --- it comes from the fact that composition is unlimited. This is analogous to how all of music is built from twelve notes, or how all of chemistry is built from about a hundred elements.
+\end{keyinsight}
+
+\subsection{Nesting and Flattening}
+
+Composing type constructors sometimes creates equivalent types that look different on the surface. For example:
+
+\[
+  \mathsf{optional}\langle\mathsf{optional}\langle A\rangle\rangle \;=\; (A + \Unit) + \Unit
+\]
+
+This has three cases: $\mathsf{Some}(\mathsf{Some}(a))$, $\mathsf{Some}(\mathsf{None})$, and $\mathsf{None}$. It is \emph{not} the same as $\mathsf{optional}\langle A\rangle = A + \Unit$, which only has two cases. You might be surprised by how many bugs in real code come from this: confusing ``no result'' with ``result is no result.''
+
+\begin{lstlisting}[style=cpp]
+std::optional<std::optional<int>> nested;
+
+nested = std::nullopt;                  // outer None
+nested = std::optional<int>{};          // outer Some, inner None
+nested = std::optional<int>{42};        // outer Some, inner Some(42)
+
+// These three are DISTINCT and mean different things!
+// A common source of confusion in API design.
+\end{lstlisting}
+
+\section{Type Constructors in C++ Templates: The Big Reveal}
+\label{sec:templates-as-type-constructors}
+
+We have been using C++ templates as examples throughout this chapter. Now it is time to make the connection explicit and unavoidable:
+
+\begin{keyinsight}[Templates \emph{Are} Type Constructors]
+A C++ class template \code{template<typename T> class Foo} is \emph{exactly} a type constructor. It is a compile-time function that takes a type \typename{T} as input and produces the type \typename{Foo<T>} as output. There is no gap between the concept of a type constructor in type theory and the concept of a template in C++. They are the same thing, expressed in different syntaxes.
+\end{keyinsight}
+
+\begin{lstlisting}[style=cpp]
+// This template IS a type constructor F : Type -> Type
+template<typename T>
+class Box {
+    T value;
+public:
+    explicit Box(T v) : value(std::move(v)) {}
+    T&       get()       { return value; }
+    const T& get() const { return value; }
+};
+
+// Box<int>    is F(Int)
+// Box<string> is F(String)
+// Box<Box<int>> is F(F(Int)) -- composition
+
+Box<int>           b1{42};
+Box<std::string>   b2{"hello"};
+Box<Box<int>>      b3{Box<int>{99}};
+\end{lstlisting}
+
+\begin{lstlisting}[style=cpp]
+// A binary type constructor G : Type -> Type -> Type
+template<typename A, typename B>
+class Either {
+    std::variant<A, B> data;
+public:
+    static Either left (A a) { return Either{std::variant<A,B>{std::in_place_index<0>, std::move(a)}}; }
+    static Either right(B b) { return Either{std::variant<A,B>{std::in_place_index<1>, std::move(b)}}; }
+
+    template<typename C>
+    C match(std::function<C(A)> f, std::function<C(B)> g) const {
+        return std::visit(overloaded{
+            [&](const A& a) -> C { return f(a); },
+            [&](const B& b) -> C { return g(b); }
+        }, data);
+    }
+private:
+    explicit Either(std::variant<A,B> d) : data(std::move(d)) {}
+};
+
+// Either<int, string> is G(Int, String)  -- a sum type
+auto result = Either<int, std::string>::left(42);
+\end{lstlisting>
+
+\subsection{Template Template Parameters}
+
+C++ even has syntax for passing type constructors \emph{as arguments} to other type constructors. These are called \textbf{template template parameters}:
+
+\begin{lstlisting}[style=cpp]
+// A type constructor that takes ANOTHER type constructor as argument
+// This is a higher-order type constructor!
+template<template<typename> class Container, typename T>
+class Warehouse {
+    Container<T> storage;
+public:
+    explicit Warehouse(Container<T> s) : storage(std::move(s)) {}
+    Container<T>& contents() { return storage; }
+};
+
+// Usage:
+Warehouse<std::vector, int>    w1{std::vector<int>{1,2,3}};
+Warehouse<std::list,   std::string> w2{std::list<std::string>{"a","b"}};
+
+// The type constructor 'Warehouse' takes:
+// - A type constructor (Container : Type -> Type)
+// - A concrete type (T : Type)
+// And produces a concrete type (Warehouse<Container, T> : Type)
+// So: Warehouse : (Type -> Type) -> Type -> Type
+\end{lstlisting}
+
+This is a glimpse of \textbf{higher-kinded types} --- type constructors that operate on other type constructors. We will develop this properly in the next section, and dedicate an entire chapter to it later.
+
+\subsection{Type Aliases as Type Constructor Abbreviations}
+
+C++11's \texttt{using} declarations can create aliases for type constructors:
+
+\begin{lstlisting}[style=cpp]
+// Type alias: a new name for a type
+using IntPair = std::pair<int, int>;  // IntPair : Type (nullary)
+
+// Alias template: a new name for a type constructor
+template<typename T>
+using Vec = std::vector<T>;           // Vec : Type -> Type
+
+template<typename K, typename V>
+using Dict = std::map<K, V>;          // Dict : Type -> Type -> Type
+
+// Using the alias constructors:
+Vec<int>          v = {1, 2, 3};
+Dict<std::string, int> d = {{"a", 1}, {"b", 2}};
+
+// Partial application of type constructors via aliases:
+template<typename V>
+using StringDict = std::map<std::string, V>;
+// StringDict is a type constructor with String hardcoded as key:
+// StringDict : Type -> Type
+
+StringDict<int>    ages;
+StringDict<double> scores;
+\end{lstlisting}
+
+The alias template trick at the end illustrates \textbf{partial application} of type constructors: taking a binary type constructor and fixing one argument to get a unary type constructor. This is the type-level analogue of currying.
+
+\section{Kinds: The Types of Types}
+\label{sec:kinds}
+
+We have been saying that type constructors are ``functions on types.'' But if they are functions, they should have types of their own, right? What is the ``type'' of \typename{vector}? It cannot be a type itself (in the ordinary sense), because \typename{vector} takes a type and produces a type --- it is one level up.
+
+The answer is: type constructors have \textbf{kinds}.
+
+\begin{definition}[Kind]
+A \textbf{kind} is the ``type of a type-level expression.'' Kinds classify types and type constructors the same way types classify values. The grammar of kinds is:
+
+\[
+  \kappa ::= \star \;\mid\; \kappa_1 \to \kappa_2
+\]
+
+where $\star$ (pronounced ``star'') is the kind of \emph{concrete types} (types that can have values), and $\kappa_1 \to \kappa_2$ is the kind of a type constructor that takes something of kind $\kappa_1$ and produces something of kind $\kappa_2$.
+\end{definition}
+
+\begin{keyinsight}[Kinds Are to Types as Types Are to Values]
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{ccc}
+\toprule
+\textbf{Level} & \textbf{Example} & \textbf{Classified by} \\
+\midrule
+Values & \code{42}, \code{true}, \code{"hello"} & Types \\
+Types & \typename{int}, \typename{bool}, \typename{string} & Kinds \\
+Kinds & $\star$, $\star \to \star$, $\star \to \star \to \star$ & Sorts \\
+\bottomrule
+\end{tabular}
+\end{center}
+The hierarchy can in principle continue upward, but in practice we rarely go beyond kinds.
+\end{keyinsight}
+
+\subsection{Kinds of Familiar Types and Type Constructors}
+
+\begin{example}[Kinds in Haskell and C++]
+\renewcommand{\arraystretch}{1.2}
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Type Constructor} & \textbf{Kind} & \textbf{Why} \\
+\midrule
+\typename{int}, \typename{bool}, \typename{char} & $\star$ & Concrete types \\
+\typename{Int}, \typename{Bool} (Haskell) & $\star$ & Concrete types \\
+\typename{vector<int>} & $\star$ & Fully applied, concrete \\
+\typename{vector} & $\star \to \star$ & Takes one type, gives type \\
+\typename{optional} & $\star \to \star$ & Takes one type, gives type \\
+\typename{unique\_ptr} & $\star \to \star$ & Takes one type, gives type \\
+\typename{pair} & $\star \to \star \to \star$ & Takes two types, gives type \\
+\typename{map} & $\star \to \star \to \star$ & Takes two types, gives type \\
+\typename{function} & $\star \to \star \to \star$ & Takes two types, gives type \\
+\typename{tuple} & $\star^n \to \star$ & Takes $n$ types, gives type \\
+\typename{Box} (our example) & $\star \to \star$ & Takes one type, gives type \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{example}
+
+Notice that kinds use the same arrow $\to$ as function types. This is intentional. Kinds \emph{are} the types of the type level, so of course they obey the same function-type structure.
+
+\subsection{Kind Inference in C++}
+
+C++ does not make kinds explicit in its syntax, but the compiler infers and checks them. When you write:
+
+\begin{lstlisting}[style=cpp]
+// OK: vector<int> -- applying a kind (* -> *) constructor to a kind *
+std::vector<int> v;
+
+// ERROR: vector -- kind (* -> *), not a type (kind *)
+// std::vector v;  // error: use of class template 'vector' requires args
+
+// ERROR: int<int> -- int has kind *, can't be applied
+// int<int> x;  // error: int is not a template
+
+// OK: pair<int, string> -- applying (* -> * -> *) to * and *
+std::pair<int, std::string> p;
+\end{lstlisting}
+
+The error messages you get when you misuse templates are, at a deep level, \emph{kind errors}: you are applying a type constructor to the wrong number or kind of arguments.
+
+\subsection{Higher-Kinded Types}
+
+A kind like $(\star \to \star) \to \star$ is called a \textbf{higher kind}: a kind that takes a type constructor as its argument. Our \typename{Warehouse} template earlier had a kind involving this:
+
+\[
+  \typename{Warehouse} : (\star \to \star) \to \star \to \star
+\]
+
+Haskell supports higher-kinded types natively, which is why it can express patterns like \typename{Functor} and \typename{Monad} --- these are type classes (interfaces) over type constructors of kind $\star \to \star$:
+
+\begin{lstlisting}[style=haskell]
+-- Functor is a type class for type constructors of kind (* -> *)
+class Functor f where
+    fmap :: (a -> b) -> f a -> f b
+-- f here has kind * -> *   (it's a type constructor, not a type)
+
+-- Instances:
+instance Functor []       where fmap = map
+instance Functor Maybe    where fmap f Nothing  = Nothing
+                                fmap f (Just x) = Just (f x)
+instance Functor (Either e) where
+    fmap f (Left  e) = Left e
+    fmap f (Right x) = Right (f x)
+\end{lstlisting}
+
+C++ does not have a direct way to express ``this template parameter must be a unary type constructor'' in the type system (before C++20 Concepts). Concepts get closer, but kind polymorphism remains an active area of language design. We will revisit this in the chapter on generic programming.
+
+\begin{keyinsight}[The Kind Hierarchy Is the Key to Abstraction]
+Once you understand kinds, you understand why some abstractions are more powerful than others. A function that works for any type $T : \star$ is generic. A function that works for any type constructor $F : \star \to \star$ is \emph{more} generic --- it abstracts over an entire dimension of structure. Haskell's \typename{Functor}, \typename{Applicative}, and \typename{Monad} type classes all operate at kind $\star \to \star$, which is why they are so broadly applicable.
+\end{keyinsight}
+
+\section{Putting It All Together: A Grammar of Types}
+\label{sec:grammar}
+
+We now have enough machinery to write down the \textbf{grammar of types} for a simple type system:
+
+\[
+\tau ::=
+  \Bool \;\mid\; \Nat \;\mid\; \Unit \;\mid\; \Void
+  \;\mid\; \tau_1 \times \tau_2 \;\mid\; \tau_1 + \tau_2 \;\mid\; \tau_1 \to \tau_2
+  \;\mid\; F(\tau_1, \ldots, \tau_n)
+\]
+
+This is a \emph{context-free grammar} for types. The base cases are the atomic types. The recursive cases are type constructors applied to sub-types. Every well-formed type can be built by finitely many applications of this grammar.
+
+\begin{example}[Parsing a Complex Type]
+Let us parse the type \code{optional<vector<pair<string, int>>>} step by step:
+
+\begin{align*}
+  &\code{optional<vector<pair<string, int>>>} \\
+  &= \mathsf{optional}(\mathsf{vector}(\mathsf{pair}(\mathsf{String},\, \mathsf{Int}))) \\
+  &= (A + \Unit) \quad\text{where } A = \mathsf{List}(\mathsf{String} \times \mathsf{Int}) \\
+  &= (\mathsf{List}(\mathsf{String} \times \mathsf{Int})) + \Unit
+\end{align*}
+
+So the full type is: ``either a list of (string, integer) pairs, or nothing.'' Once you see types this way, their structure becomes transparent.
+\end{example}
+
+\section{A Note on Type Constructor Syntax Across Languages}
+
+Different programming languages use different syntax to apply type constructors, but the underlying concept is the same:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lll}
+\toprule
+\textbf{Language} & \textbf{Syntax} & \textbf{Example} \\
+\midrule
+C++ & \code{F<A>} & \code{vector<int>} \\
+Java & \code{F<A>} & \code{List<Integer>} \\
+Haskell & \code{F A} (juxtaposition) & \code{Maybe Int} \\
+Rust & \code{F<A>} & \code{Vec<i32>} \\
+Swift & \code{F<A>} & \code{Array<Int>} \\
+Type theory & $F(A)$ or $F\ A$ & $\mathsf{List}(\mathsf{Nat})$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Haskell's juxtaposition syntax (\code{Maybe Int} rather than \code{Maybe<Int>}) is particularly elegant because it makes clear that type application is the same operation as value-level function application, just one level up. In C++ and Rust, angle brackets set the type arguments apart visually.
+
+\section{Summary and Looking Forward}
+\label{sec:ch3-summary}
+
+Let us collect the key ideas from this chapter:
+
+\begin{takeaway}[Chapter 3 Takeaways]
+\begin{enumerate}[leftmargin=*]
+  \item A \textbf{type constructor} is a function from types to types. It is not itself a type; it produces a type when applied to type arguments.
+
+  \item Type constructors are classified by their \textbf{arity}: nullary (zero args, i.e., a plain type), unary ($F : \Type \to \Type$), binary ($G : \Type \times \Type \to \Type$), and so on.
+
+  \item The three \textbf{fundamental type constructors} are: the product $\times$ (``and''), the sum $+$ (``or''), and the function type $\to$ (``from to''). Together, they form the core of most type systems.
+
+  \item Every type constructor has \textbf{introduction rules} (how to build values) and \textbf{elimination rules} (how to use values). This pattern --- intro/elim --- is the universal structure of type theory.
+
+  \item \textbf{Type constructors compose}: $F(G(A))$ is a valid type whenever $G : \Type \to \Type$ and $F : \Type \to \Type$.
+
+  \item \textbf{C++ templates are type constructors}. \code{template<typename T> class Foo} is exactly $F : \Type \to \Type$.
+
+  \item \textbf{Kinds} are the ``types of types.'' A concrete type has kind $\star$. A unary type constructor has kind $\star \to \star$. A binary type constructor has kind $\star \to \star \to \star$. Kind errors manifest as template errors in C++.
+
+  \item Familiar C++ types decode into type-theoretic primitives: \typename{struct} is $\times$, \typename{variant} is $+$, \typename{optional<A>} is $A + \Unit$, \typename{std::function} is $\to$.
+\end{enumerate}
+\end{takeaway}
+
+In the next chapter, we turn to \textbf{algebraic data types} --- the systematic study of types built from $\times$ and $+$. We will see that these two constructors, combined with a handful of base types, are sufficient to define virtually every data structure you have ever used: lists, trees, graphs, optional values, error types, and much more.
+
+\section{Exercises}
+\label{sec:ch3-exercises}
+
+\begin{exercise}
+For each of the following C++ types, write the corresponding type-theoretic expression using $\times$, $+$, $\to$, and the base types $\mathsf{Int}$, $\mathsf{String}$, $\mathsf{Bool}$, $\Unit$:
+\begin{enumerate}
+  \item \code{std::pair<int, bool>}
+  \item \code{std::optional<std::string>}
+  \item \code{std::variant<int, bool, std::string>}
+  \item \code{std::function<bool(int, int)>}
+  \item \code{std::map<std::string, int>} (Hint: think of a map as a function from keys to optional values)
+  \item \code{std::vector<std::pair<std::string, int>>}
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+Count the number of distinct values in each of the following types (where $|\mathsf{Bit}| = 2$, $|\mathsf{Nibble}| = 16$, $|\Unit| = 1$, $|\Void| = 0$):
+\begin{enumerate}
+  \item $\mathsf{Bit} \times \mathsf{Bit} \times \mathsf{Bit}$
+  \item $\mathsf{Bit} + \mathsf{Bit}$
+  \item $\mathsf{Nibble} \to \mathsf{Bit}$
+  \item $\mathsf{Bit} \to \mathsf{Nibble}$
+  \item $\mathsf{Bit} \times (\mathsf{Bit} + \mathsf{Bit})$
+  \item $(\mathsf{Bit} \times \mathsf{Bit}) + (\mathsf{Bit} \times \mathsf{Bit})$
+  \item $A \times \Unit$ for any type $A$
+  \item $A + \Void$ for any type $A$
+\end{enumerate}
+What do your answers to (g) and (h) tell you about $\Unit$ and $\Void$ in the algebra of types?
+\end{exercise}
+
+\begin{exercise}
+Write a C++ function template \code{apply} with the signature:
+\begin{lstlisting}[style=cpp]
+template<typename A, typename B>
+B apply(std::function<B(A)> f, A a);
+\end{lstlisting}
+This is the eliminator for the function type. What is its implementation? (It is surprisingly short.) What does it tell you about the relationship between function types and function application?
+\end{exercise}
+
+\begin{exercise}
+The swap function $\mathsf{swap} : A \times B \to B \times A$ is an isomorphism: it has an inverse (itself!). Write the inverse $\mathsf{swap}^{-1}$ and verify that $\mathsf{swap}^{-1} \circ \mathsf{swap} = \mathsf{id}_{A \times B}$.
+
+Now consider the corresponding statement for sum types: is there an isomorphism $A + B \cong B + A$? Write it out both in type-theoretic notation and in C++ using \typename{std::variant}.
+\end{exercise}
+
+\begin{exercise}
+\textbf{(Harder)} We claimed that $\mathsf{optional}\langle A\rangle \cong A + \Unit$. Prove this by writing two C++ functions:
+\begin{lstlisting}[style=cpp]
+template<typename A>
+std::variant<A, std::monostate> to_variant(std::optional<A> opt);
+
+template<typename A>
+std::optional<A> from_variant(std::variant<A, std::monostate> v);
+\end{lstlisting}
+and verifying (by testing or by argument) that \code{from\_variant(to\_variant(x)) == x} for all \code{x}, and \code{to\_variant(from\_variant(y)) == y} for all \code{y}. (\typename{std::monostate} is C++'s name for $\Unit$ inside a variant.)
+\end{exercise}
+
+\begin{exercise}
+What is the kind of each of the following type constructors?
+\begin{enumerate}
+  \item \code{std::optional}
+  \item \code{std::pair}
+  \item \code{std::tuple} (with two type parameters)
+  \item \code{std::function} (viewed as a binary type constructor taking return type and argument type)
+  \item The \code{Warehouse} template from Section~\ref{sec:templates-as-type-constructors}
+  \item A hypothetical \code{Compose<F, G>} that applies type constructor $F$ after $G$
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+\textbf{(Currying exercise)} The currying isomorphism says:
+\[
+  (A \times B \to C) \;\cong\; (A \to B \to C)
+\]
+Implement this in C++ by writing \code{curry} and \code{uncurry}:
+\begin{lstlisting}[style=cpp]
+template<typename A, typename B, typename C>
+std::function<C(B)> curry_apply(
+    std::function<C(A,B)> f,
+    A a
+);
+
+template<typename A, typename B, typename C>
+std::function<C(A,B)> uncurry(
+    std::function<std::function<C(B)>(A)> f
+);
+\end{lstlisting}
+Test your implementation on a few examples (e.g., currying \code{std::plus<int>}).
+\end{exercise}
+
+\begin{exercise}
+\textbf{(Reflection)} We have used the three type constructors $\times$, $+$, and $\to$ throughout this chapter. Consider the following analogy:
+\begin{center}
+\begin{tabular}{ccc}
+\toprule
+\textbf{Type} & \textbf{Constructor} & \textbf{Algebraic Analogue} \\
+\midrule
+$A \times B$ & product & multiplication \\
+$A + B$ & sum & addition \\
+$A \to B = B^A$ & function & exponentiation \\
+\bottomrule
+\end{tabular}
+\end{center}
+Using this analogy, verify the following type isomorphisms by checking both sides with cardinality arguments:
+\begin{enumerate}
+  \item $A \times (B + C) \cong (A \times B) + (A \times C)$ \quad (distributivity)
+  \item $(B \times C)^A \cong B^A \times C^A$
+  \item $C^{A+B} \cong C^A \times C^B$
+  \item $C^{A \times B} \cong (C^B)^A$ \quad (this is the currying isomorphism!)
+\end{enumerate}
+Can you implement each isomorphism as a pair of inverse C++ functions?
+\end{exercise}

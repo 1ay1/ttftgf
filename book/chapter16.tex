@@ -1,0 +1,1435 @@
+% ============================================================
+%  Chapter 16 ---'' Putting It All Together
+%  Type Theory from the Ground Up
+% ============================================================
+\chapter{Putting It All Together}
+\label{ch:putting-together}
+
+\begin{quote}
+\itshape
+``The purpose of abstracting is not to be vague, but to create a new semantic level
+in which one can be absolutely precise.''
+\end{quote}
+\begin{flushright}
+--- Edsger W. Dijkstra
+\end{flushright}
+
+\bigskip
+
+\noindent
+You made it. Sixteen chapters ago you stood at the threshold, asking a deceptively simple
+question: what is a type, really? You have spent the chapters since then building an answer
+that is, by now, anything but simple --- and yet, in the way that all deep things eventually
+become, it feels natural. Types are not just tags on variables. They are \emph{propositions}.
+They are \emph{invariants}. They are \emph{specifications} that your compiler checks for free.
+
+This final chapter is different from the ones before it. We will not introduce new formalism.
+Instead, we will do three things. First, we will walk the entire road we have traveled and
+draw the map --- see how every concept connects to every other. Second, we will build real
+things: a type-safe state machine, a dimension-checked matrix library, a typed expression
+evaluator, each one a demonstration that the theory we have studied is immediately and
+concretely useful. Third, we will step back and ask the bigger questions: when \emph{not}
+to use all this machinery, how to read the error messages it produces, where to go from
+here, and what it all means.
+
+Let's begin with the big picture.
+
+% ============================================================
+\section{The Grand Tour: A Map of Type Theory}
+\label{sec:grand-tour}
+% ============================================================
+
+Fifteen chapters is a long journey. Let us retrace it in one sweep, not to repeat the
+details but to see the \emph{shape} of the landscape --- how each idea was the necessary
+foundation for the next.
+
+\subsection{The Ground Floor: What Is a Type?}
+
+We started with the observation that untyped programs are dangerous because the same bit
+pattern can mean many different things. A type is a \emph{classification} that constrains
+which operations are meaningful. In the set-theoretic view, a type is just a set of values.
+In the operational view, a type is a collection of behaviors. In the proof-theoretic view ---
+the view we built toward throughout this book --- a type is a \emph{proposition}, and a
+value of that type is a \emph{proof} of that proposition.
+
+This first idea, humble as it seems, is the seed of everything else. Once you accept that
+types classify values, you immediately want to know: how do we build new types from old ones?
+How do we describe functions? How do we describe data that can be one thing or another?
+
+\subsection{Lambda Calculus: The Language of Computation}
+
+Before we could answer those questions, we needed a precise, minimal language in which to
+reason. That language is the \emph{lambda calculus}: terms (variables, abstractions,
+applications), a single reduction rule (beta reduction), and the Church-Rosser theorem
+guaranteeing that the order of reduction does not matter.
+
+The untyped lambda calculus is universal --- it can express any computation --- but it
+permits nonsense, like applying a number to another number. The \emph{simply typed} lambda
+calculus (STLC) adds a type to each binder, and suddenly the type checker can reject
+ill-formed programs. The function type $A \to B$ is the type of a computation that, given
+evidence of $A$, produces evidence of $B$. This is not just syntax. It is the function type
+as logical implication.
+
+\subsection{Polymorphism: From Simple to Universal}
+
+The STLC is safe but rigid. A swap function has type $A \to A \to A \times A \to A \times A$
+only for one specific $A$. We needed \emph{System F} --- the second-order lambda calculus ---
+where you can abstract over types themselves: $\Lambda \alpha.\ \lambda x : \alpha.\ x$ has
+type $\forall \alpha.\ \alpha \to \alpha$.
+
+This is the theoretical core of C++ templates, Haskell type variables, Java generics, and
+Rust monomorphization. A polymorphic function is a function that is parameterized by a type,
+and Reynold's parametricity theorem tells us something extraordinary: the \emph{type alone}
+constrains what the function can possibly do. The only function of type $\forall\alpha.\ \alpha
+\to \alpha$ is the identity. The type is a specification.
+
+\subsection{Type Inference: Let the Compiler Think}
+
+Requiring the programmer to write out every type annotation is tedious. Hindley--Milner type
+inference lets you omit most annotations; the compiler reconstructs them by constraint
+generation (each node in the expression tree contributes equations) and unification
+(solving those equations). The algorithm, W, is sound and complete for the Hindley--Milner
+fragment. C++ uses a weaker, local version for \code{auto} and template argument deduction,
+but the underlying idea --- type variables and unification --- is the same.
+
+\subsection{Subtyping: The Liskov Substitution Principle, Formalized}
+
+Once we have multiple types, we want to express that one type is ``at least as capable'' as
+another. Subtyping gives us the relation $S <: T$: a value of type $S$ may be used wherever
+a $T$ is expected. For function types, subtyping is \emph{contravariant} in the argument
+and \emph{covariant} in the result: $T_1 \to S_2 <: S_1 \to T_2$ when $S_1 <: T_1$ and
+$S_2 <: T_2$. Variance is not a C++ quirk; it is a mathematical law arising from how
+substitution must preserve type safety.
+
+\subsection{Algebraic Data Types: The Algebra of Types}
+
+Product types $A \times B$ (both) and sum types $A + B$ (one or the other) are the
+fundamental building blocks of data. Their cardinalities obey arithmetic: $|A \times B| =
+|A| \cdot |B|$ and $|A + B| = |A| + |B|$. Function types are exponentials: $|A \to B| =
+|B|^{|A|}$. This is not a coincidence --- the semiring laws hold exactly, and the isomorphisms
+that hold for numbers (like $A \times (B + C) \cong A \times B + A \times C$) hold for types.
+
+In C++, product types are \code{struct} and \code{pair}; sum types are \code{std::variant};
+the unit type is a struct with no fields; the void type (the bottom) is the empty variant.
+Pattern matching over sum types is \code{std::visit} with a visitor.
+
+\subsection{Recursive Types and Inductive Data}
+
+Types can refer to themselves. A list is either empty, or a head element together with
+another list. A binary tree is either a leaf, or a node with two trees. These are
+\emph{recursive types}, and the data they contain has \emph{inductive structure} that
+supports structural recursion and induction.
+
+In C++, recursive types appear as recursive templates (\typename{std::list},
+\typename{std::map}) and as recursive \code{std::variant}s wrapped in \code{std::unique\_ptr}
+to break the infinite size. The recursion principle for such types is the fold, known in
+functional programming as \code{catamorphism}.
+
+\subsection{Dependent Types: Types That Depend on Values}
+
+In all the systems above, types and values live in separate worlds. \emph{Dependent types}
+collapse that wall: a type can mention a value. The type \code{Vector n} --- a vector of
+exactly $n$ elements --- is indexed by the natural number $n$. A function that concatenates
+two vectors has type $\mathsf{Vector}\ m \to \mathsf{Vector}\ n \to \mathsf{Vector}\ (m+n)$,
+and the return type depends on the \emph{values} of its arguments.
+
+C++ does not have full dependent types, but it approximates them powerfully with
+\code{template <std::size\_t N>} and \code{constexpr}. A \code{std::array<T, N>} is a
+dependent type in exactly this sense. When you template on a dimension and enforce size
+consistency at compile time, you are doing dependent typing.
+
+\subsection{Higher-Kinded Types and Type Constructors}
+
+Types have types too. Just as values have type $A$, type constructors like \typename{vector}
+or \typename{optional} have \emph{kind} $\Type \to \Type$. A functor is a type constructor
+$F : \Type \to \Type$ equipped with a map operation. Monad, Applicative, Traversable --- all
+of category theory's vocabulary for structured computation lives at this level.
+
+C++ approximates this with template template parameters and, more elegantly, with concepts
+that constrain type constructors.
+
+\subsection{Constraints and Concepts}
+
+SFINAE was the original mechanism for ad-hoc constraints on templates: if substitution
+fails, the overload is silently discarded. C++20 concepts replace this with explicit,
+readable, first-class constraints. A concept is a predicate on types. A requires-clause
+filters which specializations are valid. Concept satisfaction forms a partial order, and
+overload resolution prefers more constrained candidates.
+
+From the type theory perspective, a concept is a \emph{bounded quantifier}:
+$\forall (\alpha : F).\ \ldots$ where $F$ is a predicate on types.
+
+\subsection{Curry--Howard: The Great Unification}
+
+The capstone insight of this book: there is a deep, structural correspondence between
+type theory and logic. Types are propositions; programs are proofs; type checking is proof
+verification; evaluation is proof normalization. Product types are conjunction; sum types
+are disjunction; function types are implication; the empty type is falsehood; the unit type
+is truth. Dependent products are universal quantification; dependent sums are existential.
+
+This is not a metaphor. The correspondence is exact and constructive: a proof of $A \Rightarrow
+B$ is literally a function $A \to B$ in the calculus. Once you see this, you cannot unsee it.
+
+\subsection{A Map of the Territory}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.4cm and 2.2cm,
+  every node/.style={draw, rounded corners, align=center, font=\small},
+  arrow/.style={-Stealth, thick},
+  thick
+]
+\node (untyped) [fill=red!10]          {Untyped\\Lambda Calculus};
+\node (stlc)    [fill=orange!10, right=of untyped] {Simply Typed\\Lambda Calculus};
+\node (systemf) [fill=yellow!10, right=of stlc]    {System F\\(Polymorphism)};
+\node (hm)      [fill=green!10, below=of systemf]  {Hindley--Milner\\Type Inference};
+\node (sub)     [fill=green!10, below=of stlc]     {Subtyping\\+ Variance};
+\node (adt)     [fill=cyan!10, below=of untyped]   {Algebraic\\Data Types};
+\node (dep)     [fill=blue!10, below=of hm]        {Dependent\\Types};
+\node (hkt)     [fill=violet!10, below=of dep]     {Higher-Kinded\\Types};
+\node (ch)      [fill=magenta!10, below=of adt]    {Curry--Howard\\Correspondence};
+\node (cpp)     [fill=gray!15, below right=1.0cm and 0.5cm of ch]  {C++ Templates,\\Concepts, constexpr};
+
+\draw[arrow] (untyped) -- (stlc);
+\draw[arrow] (stlc)    -- (systemf);
+\draw[arrow] (systemf) -- (hm);
+\draw[arrow] (stlc)    -- (sub);
+\draw[arrow] (stlc)    -- (adt);
+\draw[arrow] (adt)     -- (ch);
+\draw[arrow] (systemf) -- (dep);
+\draw[arrow] (dep)     -- (hkt);
+\draw[arrow] (hm)      -- (dep);
+\draw[arrow] (sub)     -- (cpp);
+\draw[arrow] (adt)     -- (cpp);
+\draw[arrow] (dep)     -- (cpp);
+\draw[arrow] (ch)      -- (cpp);
+\draw[arrow] (hkt)     -- (cpp);
+\end{tikzpicture}
+\end{center}
+
+\begin{keyinsight}[Every Layer Was Necessary]
+Notice how the map has no shortcuts. You cannot understand dependent types without
+understanding polymorphism. You cannot appreciate Curry--Howard without understanding
+sum and product types. You cannot use C++ concepts fluently without knowing subtyping
+and bounded quantification. Each chapter was a stone in this arch.
+\end{keyinsight}
+
+% ============================================================
+\section{Designing Type-Safe APIs: The Practitioner's Toolkit}
+\label{sec:type-safe-apis}
+% ============================================================
+
+Theory is only as good as its applications. Let us now design a small but realistic
+library from scratch, applying every tool we have learned. The domain: a simple
+network request pipeline.
+
+\subsection{Principle One: No Primitive Obsession}
+
+The most common type-safety failure in real code is \emph{primitive obsession}: using
+raw \code{int}, \code{std::string}, or \code{double} for values that carry distinct
+semantic meaning. The compiler treats two \code{int}s as interchangeable even when
+one is a port number and the other is a timeout in milliseconds.
+
+The fix is to wrap primitives in \emph{strong types}:
+
+\begin{lstlisting}[style=cpp, caption={Strong wrapper types eliminate primitive confusion}]
+#include <chrono>
+#include <cstdint>
+#include <string>
+#include <utility>
+
+// Each of these is a distinct type, despite holding a plain integer.
+// The compiler will refuse to mix them up.
+struct Port {
+    explicit Port(std::uint16_t v) : value(v) {}
+    std::uint16_t value;
+};
+
+struct TimeoutMs {
+    explicit TimeoutMs(std::uint32_t v) : value(v) {}
+    std::uint32_t value;
+};
+
+struct MaxRetries {
+    explicit MaxRetries(std::uint8_t v) : value(v) {}
+    std::uint8_t value;
+};
+
+struct Hostname {
+    explicit Hostname(std::string v) : value(std::move(v)) {}
+    std::string value;
+};
+
+// Now this function signature is self-documenting AND enforced:
+void connect(Hostname host, Port port, TimeoutMs timeout, MaxRetries retries);
+
+// At the call site, you cannot accidentally swap port and timeout:
+// connect(Hostname{"api.example.com"}, Port{443}, TimeoutMs{5000}, MaxRetries{3});
+//
+// This would be a compile error:
+// connect(Hostname{"api.example.com"}, TimeoutMs{5000}, Port{443}, MaxRetries{3});
+//         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ argument type mismatch
+\end{lstlisting}
+
+\begin{keyinsight}[The ``Newtype'' Pattern]
+This wrapping technique is called the \emph{newtype} pattern (named after Haskell's
+\code{newtype} keyword). A newtype has zero runtime overhead --- the wrapper struct
+compiles to the same machine code as the raw primitive --- but provides complete
+type-level isolation. It is the cheapest form of type safety available.
+\end{keyinsight}
+
+\subsection{Principle Two: Make Illegal States Unrepresentable}
+
+The phrase, coined by Yaron Minsky, is the most powerful single design principle in
+type-safe programming. If a state is logically impossible, the type system should make
+it literally impossible to construct.
+
+Consider a network request that can be in one of several states: building, sent,
+succeeded, or failed. A naive representation uses booleans and optionals:
+
+\begin{lstlisting}[style=cpp, caption={Naive state representation --- illegal states possible}]
+// BAD: nothing prevents setting both 'succeeded' and 'failed' to true
+struct Request {
+    bool sent = false;
+    bool succeeded = false;
+    bool failed = false;
+    std::optional<std::string> response_body;
+    std::optional<std::string> error_message;
+};
+\end{lstlisting}
+
+A value with \code{succeeded = true} and \code{failed = true} simultaneously is
+nonsensical, but nothing prevents it. The type system shrugs.
+
+The correct approach uses a sum type:
+
+\begin{lstlisting}[style=cpp, caption={Sum type makes illegal states unrepresentable}]
+#include <string>
+#include <variant>
+
+struct Building { };      // Request is being constructed
+
+struct Sent {             // Request has been dispatched
+    std::string request_id;
+};
+
+struct Succeeded {        // Response received successfully
+    int    status_code;
+    std::string body;
+};
+
+struct Failed {           // Something went wrong
+    std::string error_message;
+    int         error_code;
+};
+
+// The request state IS the variant. It is always exactly one thing.
+using RequestState = std::variant<Building, Sent, Succeeded, Failed>;
+
+// Processing: pattern match over every possible state
+std::string describe(const RequestState& state) {
+    return std::visit([](const auto& s) -> std::string {
+        using T = std::decay_t<decltype(s)>;
+        if constexpr (std::is_same_v<T, Building>)
+            return "Building request...";
+        else if constexpr (std::is_same_v<T, Sent>)
+            return "Sent (id: " + s.request_id + ")";
+        else if constexpr (std::is_same_v<T, Succeeded>)
+            return "OK " + std::to_string(s.status_code);
+        else
+            return "Error: " + s.error_message;
+    }, state);
+}
+\end{lstlisting}
+
+Now it is \emph{structurally impossible} to have a request that is both succeeded and
+failed. The type system enforces the invariant, and you never need to write a runtime
+assertion for it.
+
+\subsection{Principle Three: Use Concepts for Clean Constraints}
+
+Once your types are well-designed, constrain your generic code explicitly:
+
+\begin{lstlisting}[style=cpp, caption={Concepts express constraints clearly and generate readable errors}]
+#include <concepts>
+#include <string>
+
+// A type models Serializable if it can produce a JSON string
+template<typename T>
+concept Serializable = requires(const T& t) {
+    { t.to_json() } -> std::convertible_to<std::string>;
+};
+
+// A type models Loggable if it has a human-readable description
+template<typename T>
+concept Loggable = requires(const T& t) {
+    { t.describe() } -> std::convertible_to<std::string>;
+};
+
+// This function requires both: the constraint is part of the interface
+template<Serializable T>
+    requires Loggable<T>
+void send_with_logging(const T& payload) {
+    log("Sending: " + payload.describe());
+    transmit(payload.to_json());
+}
+\end{lstlisting}
+
+The concept violation message names the unsatisfied requirement precisely, rather than
+burying it in dozens of lines of substitution failure.
+
+% ============================================================
+\section{Case Study: A Type-Safe Compile-Time State Machine}
+\label{sec:state-machine}
+% ============================================================
+
+A state machine consists of states, transitions, and the rule that only valid transitions
+are allowed. Our goal: make \emph{invalid transitions fail to compile}. This is a direct
+application of the ideas from Chapter 15 on session types.
+
+\begin{lstlisting}[style=cpp, caption={Type-safe state machine: invalid transitions are compile errors}]
+#include <concepts>
+#include <iostream>
+#include <string>
+
+// ---- State tags (uninhabited types used purely as type-level labels) ----
+struct StateIdle       {};
+struct StateConnecting {};
+struct StateConnected  {};
+struct StateError      {};
+
+// ---- Transition concept: a type represents a valid transition ----
+// A Transition<From, To> is a callable that, given a From&, produces a To.
+template<typename T, typename From, typename To>
+concept Transition = requires(T t, From& from) {
+    { t(from) } -> std::same_as<To>;
+};
+
+// ---- The machine itself: parameterized by its current state ----
+template<typename State>
+class Connection {
+public:
+    // Constructor is private; only the static factory and transitions create instances
+    explicit Connection(std::string name) : name_(std::move(name)) {}
+
+    const std::string& name() const { return name_; }
+
+private:
+    std::string name_;
+
+    // Allow transition() to access internals
+    template<typename S> friend class Connection;
+    template<typename From, typename To, typename TransFn>
+    friend Connection<To> transition(Connection<From>, TransFn&&);
+};
+
+// ---- The transition function: only compiles for valid (From->To) pairs ----
+template<typename From, typename To, typename TransFn>
+    requires Transition<TransFn, From, To>
+Connection<To> do_transition(Connection<From> conn, TransFn&& fn) {
+    From state{};
+    To   next_state = fn(state);
+    (void)next_state; // next_state encodes the transition
+    return Connection<To>(conn.name());
+}
+
+// ---- Specific transition policies ----
+struct BeginConnecting {
+    StateConnecting operator()(StateIdle&) const {
+        std::cout << "  [transition] Idle -> Connecting\n";
+        return {};
+    }
+};
+
+struct FinishConnecting {
+    StateConnected operator()(StateConnecting&) const {
+        std::cout << "  [transition] Connecting -> Connected\n";
+        return {};
+    }
+};
+
+struct Disconnect {
+    StateIdle operator()(StateConnected&) const {
+        std::cout << "  [transition] Connected -> Idle\n";
+        return {};
+    }
+};
+
+struct ConnectionFailed {
+    StateError operator()(StateConnecting&) const {
+        std::cout << "  [transition] Connecting -> Error\n";
+        return {};
+    }
+};
+
+int main() {
+    Connection<StateIdle> c("my-server");
+    std::cout << "Created connection: " << c.name() << "\n";
+
+    // Valid transitions -- all compile
+    auto c2 = do_transition<StateIdle, StateConnecting>(c,       BeginConnecting{});
+    auto c3 = do_transition<StateConnecting, StateConnected>(c2, FinishConnecting{});
+    auto c4 = do_transition<StateConnected, StateIdle>(c3,       Disconnect{});
+
+    // The following would be COMPILE ERRORS:
+    // do_transition<StateIdle, StateConnected>(c, FinishConnecting{});
+    //   error: 'FinishConnecting' does not satisfy concept 'Transition<StateIdle, StateConnected>'
+    //   because FinishConnecting::operator() takes StateConnecting&, not StateIdle&
+    //
+    // do_transition<StateConnected, StateConnecting>(c3, BeginConnecting{});
+    //   error: same reason
+
+    return 0;
+}
+\end{lstlisting}
+
+\begin{cppconnection}[Connection to Session Types]
+This state machine is a concrete realization of the session types discussed in
+Chapter 15. Each \typename{Connection<S>} is a \emph{capability token} for state $S$.
+The only way to obtain a \typename{Connection<StateConnected>} is to have started
+from a \typename{Connection<StateIdle>} and executed the correct transition sequence.
+The type system enforces the protocol. The runtime cannot violate it.
+
+In a full session-type system (like Rust's typestate pattern or Idris's linear types),
+you could also enforce that each state is consumed exactly once --- preventing
+double-disconnection or use-after-close. C++ can approximate this with move-only types.
+\end{cppconnection}
+
+\begin{exercise}
+Extend the state machine to make \typename{Connection} move-only (delete the copy
+constructor and copy assignment). Then verify that \code{do\_transition} consumes the
+old connection (by taking it by value), preventing you from using a stale state after
+a transition. This is the ``linear types'' restriction enforced by C++ move semantics.
+\end{exercise}
+
+% ============================================================
+\section{Case Study: A Type-Safe Matrix Library}
+\label{sec:matrix-library}
+% ============================================================
+
+Matrix multiplication has a fundamental constraint: you can only multiply an $m \times k$
+matrix by a $k \times n$ matrix, producing an $m \times n$ result. The inner dimensions
+must match. In a naive implementation, this is checked at runtime. We can do better.
+
+\begin{lstlisting}[style=cpp, caption={Dimension-checked matrix: size mismatches are compile errors}]
+#include <array>
+#include <concepts>
+#include <iostream>
+#include <stdexcept>
+
+// ---- Matrix parameterized by compile-time dimensions ----
+template<typename T, std::size_t Rows, std::size_t Cols>
+class Matrix {
+public:
+    static constexpr std::size_t rows = Rows;
+    static constexpr std::size_t cols = Cols;
+
+    Matrix() : data_{} {}
+
+    T& at(std::size_t r, std::size_t c) {
+        return data_[r * Cols + c];
+    }
+
+    const T& at(std::size_t r, std::size_t c) const {
+        return data_[r * Cols + c];
+    }
+
+    // Fill from a nested initializer for convenience
+    void fill(std::initializer_list<std::initializer_list<T>> rows_init) {
+        std::size_t r = 0;
+        for (auto& row : rows_init) {
+            std::size_t c = 0;
+            for (auto& val : row) {
+                at(r, c++) = val;
+            }
+            ++r;
+        }
+    }
+
+    void print() const {
+        for (std::size_t r = 0; r < Rows; ++r) {
+            for (std::size_t c = 0; c < Cols; ++c) {
+                std::cout << at(r, c) << " ";
+            }
+            std::cout << "\n";
+        }
+    }
+
+private:
+    std::array<T, Rows * Cols> data_;
+};
+
+// ---- Multiplication: inner dimensions MUST match (enforced at compile time) ----
+// Note: Matrix<T, M, K> * Matrix<T, K, N> -> Matrix<T, M, N>
+// The K appears in BOTH argument types; they must unify to the same value.
+template<typename T, std::size_t M, std::size_t K, std::size_t N>
+Matrix<T, M, N> operator*(const Matrix<T, M, K>& lhs, const Matrix<T, K, N>& rhs) {
+    Matrix<T, M, N> result;
+    for (std::size_t i = 0; i < M; ++i) {
+        for (std::size_t j = 0; j < N; ++j) {
+            T sum{};
+            for (std::size_t k = 0; k < K; ++k) {
+                sum += lhs.at(i, k) * rhs.at(k, j);
+            }
+            result.at(i, j) = sum;
+        }
+    }
+    return result;
+}
+
+int main() {
+    // A is 2x3, B is 3x2 -- multiplication is valid, yields 2x2
+    Matrix<double, 2, 3> A;
+    A.fill({{1, 2, 3}, {4, 5, 6}});
+
+    Matrix<double, 3, 2> B;
+    B.fill({{7, 8}, {9, 10}, {11, 12}});
+
+    Matrix<double, 2, 2> C = A * B;  // Compiles fine
+    std::cout << "A * B =\n";
+    C.print();
+
+    // The following is a COMPILE ERROR:
+    // Matrix<double, 2, 2> bad = B * A;
+    //   error: no match for 'operator*'
+    //   note: template deduction failed:
+    //     lhs is Matrix<double, 3, 2>
+    //     rhs is Matrix<double, 2, 3>
+    //     deduced K=2 from lhs, deduced K=2 from rhs
+    //   Wait -- this would actually compile! B(3x2)*A(2x3) = 3x3 matrix.
+    // Let's try a truly illegal multiplication:
+    // Matrix<double, 2, 2> E;
+    // Matrix<double, 3, 3> bad2 = A * E;
+    //   error: deduced conflicting types for K: 3 (from lhs) and 2 (from rhs)
+
+    return 0;
+}
+\end{lstlisting}
+
+\begin{keyinsight}[Dependent Typing in C++]
+The type \typename{Matrix<double, M, K>} is a \emph{dependent type}: it depends on the
+values $M$ and $K$. The multiplication operator's signature encodes the mathematical
+constraint $m \times k$ times $k \times n$ gives $m \times n$ directly in its type. This
+is exactly what a dependently typed language like Idris or Agda would express as:
+
+\begin{lstlisting}[style=haskell]
+multiply : Matrix m k -> Matrix k n -> Matrix m n
+\end{lstlisting}
+
+C++ achieves this through template parameter unification. When you write \code{A * B},
+the compiler deduces \code{M=2}, \code{K=3} from \code{A}'s type and tries to unify
+\code{K=3} with the first dimension of \code{B}. If they don't match, the template
+cannot be instantiated. The type mismatch \emph{is} the dimension mismatch.
+\end{keyinsight}
+
+% ============================================================
+\section{Case Study: A Type-Safe Expression Evaluator}
+\label{sec:expression-evaluator}
+% ============================================================
+
+Let us build a typed expression language. Expressions can be integer literals, boolean
+literals, addition of integers, conjunction of booleans, and if-then-else. The goal:
+type-incorrect expressions (like adding a boolean to an integer) are rejected at compile
+time.
+
+\begin{lstlisting}[style=cpp, caption={Expression AST using sum types and constexpr evaluation}]
+#include <iostream>
+#include <type_traits>
+#include <variant>
+#include <string>
+
+// ---- AST nodes (the algebra of expressions) ----
+
+template<typename T>
+struct Lit { T value; };           // Literal: Lit<int>{42}, Lit<bool>{true}
+
+template<typename L, typename R>
+struct Add { L lhs; R rhs; };      // Addition: only int + int is valid
+
+template<typename L, typename R>
+struct And { L lhs; R rhs; };      // Logical and: only bool && bool
+
+template<typename Cond, typename T, typename E>
+struct IfExpr { Cond cond; T then_; E else_; };  // if cond then t else e
+
+// ---- Type-directed evaluator (compile-time!) ----
+
+// Base case: integer literal
+constexpr int eval(const Lit<int>& e) { return e.value; }
+
+// Base case: boolean literal
+constexpr bool eval(const Lit<bool>& e) { return e.value; }
+
+// Addition: both sides must be integers (enforced by the return type)
+template<typename L, typename R>
+constexpr auto eval(const Add<L, R>& e)
+    -> decltype(eval(e.lhs) + eval(e.rhs))
+{
+    return eval(e.lhs) + eval(e.rhs);
+}
+
+// Logical and: both sides must be booleans
+template<typename L, typename R>
+constexpr auto eval(const And<L, R>& e)
+    -> decltype(eval(e.lhs) && eval(e.rhs))
+{
+    return eval(e.lhs) && eval(e.rhs);
+}
+
+// If-then-else: condition must be bool, branches must have the same type
+template<typename Cond, typename T, typename E>
+constexpr auto eval(const IfExpr<Cond, T, E>& e)
+    -> std::enable_if_t<
+           std::is_same_v<decltype(eval(e.cond)), bool> &&
+           std::is_same_v<decltype(eval(e.then_)), decltype(eval(e.else_))>,
+           decltype(eval(e.then_))>
+{
+    return eval(e.cond) ? eval(e.then_) : eval(e.else_);
+}
+
+int main() {
+    // (3 + 4) is 7
+    constexpr auto expr1 = Add{Lit<int>{3}, Lit<int>{4}};
+    static_assert(eval(expr1) == 7);
+
+    // if true then 10 else 20 is 10
+    constexpr auto expr2 = IfExpr{Lit<bool>{true}, Lit<int>{10}, Lit<int>{20}};
+    static_assert(eval(expr2) == 10);
+
+    // (true && false) is false
+    constexpr auto expr3 = And{Lit<bool>{true}, Lit<bool>{false}};
+    static_assert(eval(expr3) == false);
+
+    std::cout << "All expressions evaluated correctly at compile time.\n";
+
+    // The following expressions would be COMPILE ERRORS:
+
+    // Add{Lit<int>{3}, Lit<bool>{true}}    -- no operator+ for int + bool in our eval
+    // And{Lit<int>{1}, Lit<bool>{true}}    -- no operator&& for int && bool in our eval
+    // IfExpr{Lit<int>{1}, Lit<int>{2}, Lit<int>{3}}
+    //    -- condition must be bool; Lit<int> gives int, which fails the enable_if check
+    // IfExpr{Lit<bool>{true}, Lit<int>{1}, Lit<bool>{false}}
+    //    -- branches have different types (int vs bool); fails the same_as check
+
+    return 0;
+}
+\end{lstlisting}
+
+\begin{cppconnection}[GADT-Style Typing in C++]
+In a language with \emph{generalized algebraic data types} (GADTs), like Haskell or
+OCaml, you would write this evaluator with the type parameter of the expression directly
+encoding the \emph{result type}:
+
+\begin{lstlisting}[style=haskell]
+data Expr a where
+  Lit    :: a -> Expr a
+  Add    :: Expr Int  -> Expr Int  -> Expr Int
+  And    :: Expr Bool -> Expr Bool -> Expr Bool
+  IfExpr :: Expr Bool -> Expr a    -> Expr a    -> Expr a
+
+eval :: Expr a -> a
+eval (Lit v)       = v
+eval (Add l r)     = eval l + eval r
+eval (And l r)     = eval l && eval r
+eval (IfExpr c t e) = if eval c then eval t else eval e
+\end{lstlisting}
+
+Our C++ version achieves the same guarantee through template specialization and
+\code{enable\_if}. The technique is more verbose but the type safety is equivalent.
+\end{cppconnection}
+
+% ============================================================
+\section{Template Metaprogramming Through the Lens of Type Theory}
+\label{sec:tmp-type-theory}
+% ============================================================
+
+Having seen what C++ can build, let us revisit its mechanisms with fresh eyes. Every
+template metaprogramming pattern has a type-theoretic name.
+
+\subsection{Template Specialization is Pattern Matching on Types}
+
+Pattern matching in type theory is the elimination rule for sum types: to consume a
+value of type $A + B$, you provide a case for $A$ and a case for $B$. Template
+specialization does the same thing at the type level:
+
+\begin{lstlisting}[style=cpp, caption={Template specialization = type-level pattern matching}]
+#include <type_traits>
+
+// Primary template: the "catch-all" case (the default branch)
+template<typename T>
+struct TypeName { static constexpr const char* value = "unknown"; };
+
+// Specialization for int: pattern match on the type 'int'
+template<>
+struct TypeName<int> { static constexpr const char* value = "int"; };
+
+// Specialization for bool: pattern match on the type 'bool'
+template<>
+struct TypeName<bool> { static constexpr const char* value = "bool"; };
+
+// Specialization for any pointer type: pattern match on the shape T*
+template<typename T>
+struct TypeName<T*> { static constexpr const char* value = "pointer"; };
+
+// Specialization for any vector: pattern match on the shape vector<T>
+template<typename T>
+struct TypeName<std::vector<T>> { static constexpr const char* value = "vector"; };
+\end{lstlisting}
+
+The partial specialization \code{T*} is a \emph{pattern} with a free variable $T$.
+The compiler performs \emph{unification} --- exactly as in Hindley--Milner type
+inference --- to determine which specialization matches and what $T$ binds to.
+
+\subsection{SFINAE is a Type-Level Conditional}
+
+\code{std::enable\_if<Condition, T>} is the type-level equivalent of an \code{if}
+expression. When \code{Condition} is true, the type \code{T} exists; when false, the
+type does not exist and the overload is silently removed. This is a \emph{dependent
+elimination} at the level of overload resolution:
+
+\begin{lstlisting}[style=cpp, caption={SFINAE = type-level if-then-else (concepts replace this cleanly)}]
+#include <type_traits>
+#include <iostream>
+
+// Only enabled for arithmetic types
+template<typename T>
+std::enable_if_t<std::is_arithmetic_v<T>, T>
+double_it(T x) { return x * 2; }
+
+// Only enabled for non-arithmetic types (e.g., strings)
+template<typename T>
+std::enable_if_t<!std::is_arithmetic_v<T>, T>
+double_it(T x) { return x + x; }
+
+int main() {
+    std::cout << double_it(21) << "\n";          // 42
+    std::cout << double_it(std::string("ha")); // "haha"
+}
+\end{lstlisting}
+
+With C++20 concepts, the same intent is expressed without the syntax noise:
+\code{requires std::is\_arithmetic\_v<T>} is the readable, first-class form of the
+same conditional.
+
+\subsection{Type Lists are Type-Level Inductive Data}
+
+A list of types is an inductive data structure at the type level, defined by the same
+two constructors as a value-level list: nil and cons.
+
+\begin{lstlisting}[style=cpp, caption={Type lists: inductive data at the type level}]
+// The empty list of types (Nil)
+struct TypeListNil {};
+
+// The non-empty list: Head prepended to Tail (Cons)
+template<typename Head, typename Tail>
+struct TypeListCons {};
+
+// Example type list: [int, bool, double]
+using MyList = TypeListCons<int, TypeListCons<bool, TypeListCons<double, TypeListNil>>>;
+
+// Length: structural recursion on the type list (recursion principle = fold)
+template<typename List>
+struct Length;
+
+template<>
+struct Length<TypeListNil> {
+    static constexpr std::size_t value = 0;
+};
+
+template<typename Head, typename Tail>
+struct Length<TypeListCons<Head, Tail>> {
+    static constexpr std::size_t value = 1 + Length<Tail>::value;
+};
+
+static_assert(Length<MyList>::value == 3);
+\end{lstlisting}
+
+In modern C++, \code{std::tuple<int, bool, double>} is the standard type list, and
+\code{std::tuple\_size} implements the same recursion.
+
+\subsection{Recursive Templates are Structural Recursion}
+
+The length computation above is \emph{structural recursion}: the recursive case strips
+one constructor (TypeListCons) and recurses on the tail, and the base case handles
+TypeListNil. This is exactly the \emph{recursion principle} (catamorphism) for
+inductive types from Chapter~9. Every well-founded recursive template is a
+structurally recursive computation on the inductive structure of types.
+
+\subsection{constexpr if is Dependent Elimination}
+
+C++17's \code{if constexpr} is the compile-time analogue of the dependent type's
+elimination principle. In a dependent type theory, the eliminator for a sum type takes
+branches that may have \emph{different types} depending on which case is taken. That is
+exactly what \code{if constexpr} does:
+
+\begin{lstlisting}[style=cpp, caption={constexpr if = dependent elimination rule}]
+template<typename T>
+auto process(T value) {
+    // This is NOT a runtime branch -- it is a compile-time selection.
+    // The compiler only type-checks the branch that is taken.
+    // This is the dependent elimination rule for the type-level boolean std::is_integral_v<T>.
+    if constexpr (std::is_integral_v<T>) {
+        return value * 2;       // valid only for integral types
+    } else {
+        return value + value;   // might mean string concatenation
+    }
+}
+\end{lstlisting}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{C++ Template Pattern} & \textbf{Type Theory Concept} \\
+\midrule
+Template specialization & Pattern matching (elimination rule for sum types) \\
+SFINAE / \code{enable\_if} & Type-level conditional ($\text{if}$ at kind $\Type$) \\
+Type lists & Type-level inductive data structures \\
+Recursive templates & Structural recursion (catamorphism) \\
+\code{if constexpr} & Dependent elimination \\
+Concepts & Bounded quantification ($\forall (\alpha : F).\ldots$) \\
+Template template parameters & Higher-kinded type abstraction \\
+\code{auto} return type & Local type inference (Hindley--Milner fragment) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{When NOT to Use Advanced Types}
+\label{sec:when-not-to}
+% ============================================================
+
+Everything we have built in this chapter is genuinely powerful. It is also, sometimes,
+the wrong tool for the job. Intellectual honesty demands that we spend time on this.
+
+\begin{warning}[Complexity Has a Cost]
+Template metaprogramming and heavily type-parameterized code impose real costs: longer
+compilation times, harder-to-read error messages, steeper learning curves for
+maintainers, and more difficulty debugging. These costs are sometimes worth paying.
+They are not always worth paying.
+\end{warning}
+
+\subsection{When Runtime Polymorphism Beats Static}
+
+Consider a plugin system where the set of types is not known at compile time --- it is
+determined by which shared libraries are loaded at runtime. Template polymorphism is
+useless here. Virtual dispatch is the right tool. The open-world assumption (new types
+can appear after compilation) is the domain of runtime polymorphism, not static generics.
+
+Similarly, if you have a container that holds objects of different types and you do not
+know the type until runtime, \code{std::vector<std::unique\_ptr<Base>>} with virtual
+methods is simpler, more readable, and performs identically to a complex variant-based
+solution.
+
+\subsection{When Simple Inheritance Beats Concepts}
+
+If you have ten shape types and one algorithm that draws them, a virtual \code{draw()}
+method is three lines of code. The equivalent concept-based solution might be thirty
+lines. The type-safe benefit (compile-time verification) is real, but so is the cost
+in code volume and readability. For small, stable hierarchies, inheritance wins on
+pragmatics.
+
+\subsection{The Principle of Proportionate Complexity}
+
+A rough guide: use advanced type machinery when
+
+\begin{enumerate}[label=\arabic*.]
+\item The type error you are preventing has actually occurred (or very plausibly would occur) in production code.
+\item The constraint is stable --- it will not change often, forcing you to refactor the type machinery.
+\item The domain is inherently type-rich: numeric libraries, parsing, protocol encoding, state machines.
+\item Your team is comfortable with the techniques and the code must be maintained long-term.
+\end{enumerate}
+
+And prefer simpler approaches when
+
+\begin{enumerate}[label=\arabic*.]
+\item You are prototyping or exploring a design that may change.
+\item The performance cost of runtime dispatch is measurably acceptable.
+\item The additional compile-time guarantee would not catch bugs that actually occur.
+\item The code will be read by programmers unfamiliar with advanced C++ types.
+\end{enumerate}
+
+\begin{keyinsight}[Type Safety Is a Spectrum]
+Type safety is not binary. You are always choosing how much invariant enforcement to
+push into the type system. The right amount depends on the domain, the team, the
+lifetime of the code, and the severity of the bugs you are preventing. There is no
+single correct answer, but there is always a deliberate, considered choice.
+\end{keyinsight}
+
+% ============================================================
+\section{Type Theory in Other Languages}
+\label{sec:other-languages}
+% ============================================================
+
+C++ is not the only lens through which to view type theory. Each of the following
+languages makes different trade-offs, and understanding them deepens your intuition.
+
+\subsection{Haskell: The Type Theory Language}
+
+Haskell is as close as a mainstream language gets to a type-theory formalization.
+Hindley--Milner inference is the core. Type classes are the interface mechanism.
+Algebraic data types are the primary way to define data. Monads, functors, and
+applicatives are library abstractions built on higher-kinded types. Laziness makes
+infinite data structures natural.
+
+\begin{lstlisting}[style=haskell, caption={Haskell: type theory made concrete}]
+-- Polymorphic identity: the unique inhabitant of forall a. a -> a
+identity :: forall a. a -> a
+identity x = x
+
+-- Sum type with pattern matching
+data Shape = Circle Double | Rectangle Double Double
+
+area :: Shape -> Double
+area (Circle r)      = pi * r * r
+area (Rectangle w h) = w * h
+
+-- Maybe is the option type; its functor instance lifts pure functions
+safeDiv :: Int -> Int -> Maybe Int
+safeDiv _ 0 = Nothing
+safeDiv x y = Just (x `div` y)
+
+-- The type class constraint (Num a) is bounded quantification
+sumList :: Num a => [a] -> a
+sumList = foldr (+) 0
+\end{lstlisting}
+
+If you want to see type theory applied cleanly, write Haskell. The language forces you
+to think in types.
+
+\subsection{Rust: Ownership as a Type}
+
+Rust's most important innovation is making \emph{memory ownership} part of the type
+system. A value of type $T$ is owned; a value of type $\&T$ is a borrowed reference;
+$\&\text{mut}\ T$ is a mutable borrow. The borrow checker is a type-level theorem
+prover that guarantees, at compile time, that no two mutable references alias and no
+reference outlives the value it points to.
+
+This is the Curry--Howard correspondence in action: a safe memory access is a proof
+that the borrow is valid, and the type system verifies that proof.
+
+Rust traits are Haskell type classes with explicit lifetime parameters and zero-cost
+abstraction. They unify C++'s concepts and virtual dispatch into one coherent model.
+
+\subsection{Scala: Implicits and Higher-Kinded Types}
+
+Scala's type system extends Java's with higher-kinded types (type constructors as type
+parameters), variance annotations (the \code{+T} and \code{-T} syntax for covariant and
+contravariant type parameters), and \emph{implicits}: values and conversions that the
+compiler can supply automatically based on type.
+
+Implicits are the machinery behind type class simulation in Scala. A \code{given}
+instance (Scala 3 terminology) is a value the compiler finds automatically when a
+\code{using} parameter is needed. This is the same as Haskell's dictionary-passing
+translation for type classes.
+
+\subsection{TypeScript: Structural and Conditional Types}
+
+TypeScript's type system is structural (types are compatible if they have the same
+structure, not the same name) rather than nominal (types are compatible only if they are
+explicitly related). This matches the natural way that JavaScript code works, where
+object shapes are checked implicitly.
+
+TypeScript's conditional types \code{T extends U ? A : B} are type-level if-then-else
+evaluated during type checking. Mapped types \code{\{ [K in keyof T]: F<T[K]> \}} are
+type-level functors. Template literal types allow string manipulation at the type level.
+The result is a remarkably expressive dependent-type-like system for a dynamically
+typed host language.
+
+\subsection{Idris: Full Dependent Types}
+
+Idris is the most direct realization of the Curry--Howard correspondence available in a
+general-purpose language. Types can depend on arbitrary values. The type of a function
+that reverses a vector of length $n$ states that the result has the same length $n$.
+Proof obligations can be discharged interactively. Programs and their correctness proofs
+are written in the same language.
+
+\begin{lstlisting}[style=haskell, caption={Idris: length-indexed vectors (true dependent types)}]
+-- Vect n a is a list of exactly n elements of type a
+-- The length is part of the TYPE, not a runtime value
+data Vect : Nat -> Type -> Type where
+  Nil  : Vect 0 a
+  (::) : a -> Vect n a -> Vect (S n) a
+
+-- append: the type encodes that lengths add
+append : Vect m a -> Vect n a -> Vect (m + n) a
+append Nil       ys = ys
+append (x :: xs) ys = x :: append xs ys
+-- The compiler CHECKS that (m + n) is the length of the result.
+-- Returning the wrong length is a type error.
+\end{lstlisting}
+
+This is where the road from C++ templates, through Haskell type classes, ultimately
+leads.
+
+% ============================================================
+\section{Reading C++ Template Error Messages}
+\label{sec:error-messages}
+% ============================================================
+
+Now that you understand type theory, you have the conceptual vocabulary to decode
+C++ error messages that used to look like pure noise. Let us work through real examples.
+
+\subsection{Error: Concept Violation}
+
+\begin{lstlisting}[style=cpp, caption={Code that violates a concept}]
+#include <algorithm>
+#include <list>
+#include <vector>
+
+int main() {
+    std::list<int> lst = {5, 3, 1, 4, 2};
+    std::sort(lst.begin(), lst.end());   // ERROR
+}
+\end{lstlisting}
+
+The error from a modern compiler (paraphrased):
+\begin{lstlisting}[style=pseudocode]
+error: no matching function for call to 'sort'
+note: candidate template ignored: constraints not satisfied
+note: 'std::list<int>::iterator' does not satisfy 'LegacyRandomAccessIterator'
+note: expression 'i += n' is invalid with 'iterator' of type 'std::list<int>::iterator'
+\end{lstlisting}
+
+\textbf{Decoding:} \code{std::sort} requires \emph{random access iterators} --- the
+concept captures the requirement that you can advance an iterator by an arbitrary
+integer in $O(1)$ time (needed for the algorithms inside sort). A \code{std::list}
+iterator is only bidirectional: it can move forward or backward one step at a time.
+The concept subsumption check fails because \code{std::list::iterator} does not satisfy
+\code{LegacyRandomAccessIterator}. The fix: use \code{std::list::sort()}, which is a
+member function that knows the structure of the list.
+
+\textbf{Type theory:} \code{std::sort} is parameterized over a bounded type variable
+$\alpha : \mathsf{RandomAccessIterator}$. \code{std::list::iterator} does not belong
+to this type class, so the substitution is rejected.
+
+\subsection{Error: Deduction Failure}
+
+\begin{lstlisting}[style=cpp, caption={Template argument deduction failure}]
+template<typename T>
+void process(std::vector<T> v) { /* ... */ }
+
+int main() {
+    process({1, 2, 3});   // ERROR: cannot deduce T from initializer list
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=pseudocode]
+error: no matching function for call to 'process'
+note: template argument deduction/substitution failed:
+note: couldn't deduce template parameter 'T'
+\end{lstlisting}
+
+\textbf{Decoding:} The expression \code{\{1, 2, 3\}} is a \emph{braced-init-list}, which
+does not have a type on its own. The compiler cannot run Hindley--Milner unification on
+a typeless expression. You must either say \code{process(std::vector<int>\{1, 2, 3\})}
+or deduce differently.
+
+\textbf{Type theory:} Hindley--Milner constraint generation assigned a fresh type
+variable $\alpha$ to the argument expression, but the expression \code{\{1, 2, 3\}} is
+a \emph{meta-expression} that does not generate any constraint equating $\alpha$ with
+a concrete type. Unification cannot proceed.
+
+\subsection{Error: Non-Deduced Context}
+
+\begin{lstlisting}[style=cpp, caption={Non-deduced context: the return type position}]
+template<typename T>
+T identity(T x) { return x; }
+
+int main() {
+    double d = identity(42);  // T deduced as int, then int cannot initialize double? No...
+    // Actually this compiles. Let's try a truly non-deduced case:
+    auto val = identity<double>(42);  // must specify T explicitly
+}
+
+// A genuine non-deduced context:
+template<typename T>
+struct Wrapper { using type = T; };
+
+template<typename T>
+void fn(typename Wrapper<T>::type x) { }  // T cannot be deduced here
+
+// fn(42) -- ERROR: T cannot be deduced in a nested type name
+\end{lstlisting}
+
+\textbf{Decoding:} \code{typename Wrapper<T>::type} is a \emph{non-deduced context}.
+The compiler cannot reverse-engineer which $T$ makes \code{Wrapper<T>::type} equal to
+\code{int}, because in general this is undecidable (template specializations can make
+any type alias anything). The solution is to use a forwarding typedef or to specify $T$
+explicitly.
+
+\textbf{Type theory:} This is a case where the constraint generation step produces no
+constraint on $T$ at all --- the argument position is opaque to unification. The
+Hindley--Milner algorithm cannot solve for $T$ because no equation mentions it.
+
+\subsection{Error: Ambiguous Overload}
+
+\begin{lstlisting}[style=cpp, caption={Ambiguous overload: multiple candidates equally good}]
+template<typename T> void f(T, int)  { std::cout << "A"; }
+template<typename T> void f(int, T)  { std::cout << "B"; }
+
+int main() {
+    f(1, 2);   // ERROR: ambiguous
+    // Both specialize to f(int, int). Neither is more constrained.
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=pseudocode]
+error: call of overloaded 'f(int, int)' is ambiguous
+note: candidate: void f(T, int) [with T = int]
+note: candidate: void f(int, T) [with T = int]
+\end{lstlisting}
+
+\textbf{Decoding:} The overload resolution rules require a \emph{unique best match}.
+Both specializations are equally specific (neither subsumes the other in the partial
+ordering of specializations). The partial order of concepts and specializations is
+precisely the subtyping order of bounded quantification, and ambiguity means two
+incomparable elements in this order both apply.
+
+\begin{keyinsight}[Errors Are Type Theory Feedback]
+Once you have the vocabulary of type theory, every C++ error message is a statement in
+that vocabulary. ``Cannot deduce T'' means constraint generation produced no equation
+for a type variable. ``Concept not satisfied'' means a type does not belong to the
+required type class. ``Ambiguous overload'' means two candidates are incomparable in the
+subtyping order. The error messages stopped being noise; they started being diagnostic.
+\end{keyinsight}
+
+% ============================================================
+\section{Where to Go From Here}
+\label{sec:where-next}
+% ============================================================
+
+This book has given you a foundation. The field of type theory is deep and living.
+Here is a reading list organized by level.
+
+\subsection{Accessible Starting Points}
+
+\textbf{Types and Programming Languages} by Benjamin C. Pierce is the canonical
+textbook for everything this book has covered, presented with full formal precision.
+It is rigorous but accessible to anyone with mathematical maturity. Read it to fill in
+every proof we omitted.
+
+\textbf{Haskell Programming from First Principles} by Allen and Moronuki teaches
+Haskell with unusual depth, and because Haskell is essentially type theory made
+executable, learning it deeply means internalizing Hindley--Milner, type classes, and
+higher-kinded types through practice.
+
+\textbf{Real World Haskell} by O'Sullivan, Stewart, and Goerzen shows the same theory
+applied to practical programming: parsing, concurrency, databases, and more.
+
+\subsection{Intermediate Depth}
+
+\textbf{Software Foundations} by Pierce and others is a textbook in the Coq proof
+assistant. Working through it means writing proofs in a language where types are
+propositions and programs are proofs --- you live the Curry--Howard correspondence rather
+than reading about it. It is available free online at \url{https://softwarefoundations.cis.upenn.edu}.
+
+\textbf{Programming in Haskell} by Graham Hutton is a short, elegant introduction that
+rewards re-reading after you have more experience.
+
+\textbf{The Agda programming language}: Agda is an interactive theorem prover with
+dependent types. Working through the standard library's data structures will sharpen
+your understanding of dependent types significantly.
+
+\subsection{Advanced Territory}
+
+\textbf{Homotopy Type Theory} (the HoTT Book) is the frontier. It re-examines the
+foundations of mathematics from the perspective of type theory, with identities between
+proofs interpreted geometrically as paths in a space. It is accessible to anyone who
+has mastered the material in this book, though it is not light reading.
+
+\textbf{Category Theory for Programmers} by Bartosz Milewski (available as a free PDF
+and as a print book) is a beautifully written introduction to category theory --- the
+mathematics that unifies Haskell's abstractions. After this book, it is the natural next
+step.
+
+\textbf{Practical Foundations of Mathematics} by Paul Taylor is for those who want to
+understand type theory as a foundation for all of mathematics.
+
+\subsection{C++-Specific Resources}
+
+\textbf{C++ Templates: The Complete Guide} by Vandevoorde, Josuttis, and Gregor is the
+definitive reference for template mechanics. With the type theory you now have, every
+chapter will make deeper sense.
+
+\textbf{From Mathematics to Generic Programming} by Stepanov and Rose traces the
+intellectual lineage of the C++ STL from abstract algebra. It is a superb book about
+how mathematical structure becomes software.
+
+\textbf{Effective Modern C++} by Scott Meyers covers the C++11/14 changes (move
+semantics, lambdas, perfect forwarding) with characteristic clarity.
+
+The C++ standard proposals on \url{https://open-std.org} are where the language evolves.
+Now that you understand the type theory, the rationale documents for proposals on
+concepts, ranges, and reflection are readable and fascinating.
+
+% ============================================================
+\section{Closing Thoughts}
+\label{sec:closing}
+% ============================================================
+
+We began this book with a confession: most programmers use types every day without really
+thinking about what they are. You are no longer that programmer.
+
+You know that a type is simultaneously a set of values, a collection of behaviors, and
+a logical proposition. You know that a function type $A \to B$ is not just a description
+of a computation but a proof that, given evidence of $A$, you can always produce evidence
+of $B$. You know that sum types are disjunctions, product types are conjunctions, and that
+the entire algebra of data structures follows the same laws as ordinary arithmetic.
+
+You know what it means for a type system to be sound, and why soundness is worth caring
+about. You know the difference between parametric polymorphism (which must treat all types
+uniformly) and ad-hoc polymorphism (which can inspect the type and behave differently).
+You know why variance annotations are not arbitrary rules but mathematical necessities.
+You know what Hindley--Milner inference does and why it terminates.
+
+And you know, perhaps most importantly, that types are a \emph{way of thinking}. When
+you design a new library, you ask: what are the states? What are the valid transitions?
+What invariants should be impossible to violate? You reach for strong types before you
+reach for assertions. You design your sum types so that illegal states cannot be
+constructed, rather than writing defensive code to check for them at runtime.
+
+This is the real payoff. Not fewer runtime errors (though there will be fewer). Not
+faster code (though sometimes the compiler can optimize more aggressively when it knows
+more). The real payoff is \emph{clarity of thought}. The discipline of expressing your
+program's invariants in its types forces you to understand those invariants, and
+understanding them leads to better designs.
+
+The physicist Eugene Wigner wrote about the ``unreasonable effectiveness of mathematics
+in the natural sciences'' --- the mysterious fact that abstract mathematical structures,
+developed for purely intellectual reasons, turn out to describe the physical world with
+uncanny precision. Type theory enjoys a similarly unreasonable effectiveness in computer
+science. The semiring of types, the Curry--Howard correspondence, the Yoneda lemma applied
+to functors --- these are not engineering inventions made to solve software problems. They
+are mathematical truths that turn out to describe the structure of computation.
+
+You have learned to see that structure. You have learned to read the shape of a type
+and know what a function can and cannot do. You have learned to look at a template error
+message and understand what the compiler is telling you. You have learned to design data
+types that make your program's laws visible to the compiler.
+
+That foundation is yours now. The journey from here is as long as you want it to be.
+
+\bigskip
+
+\begin{takeaway}[The Entire Book in One Place: Key Insights by Chapter]
+\begin{enumerate}[label=\textbf{Ch.\,\arabic*.}, leftmargin=*, itemsep=6pt]
+
+\item \textbf{What Are Types, Really?} ---
+      A type classifies values and constrains which operations are meaningful. In the
+      untyped world, any bit pattern can be treated as any value; types enforce the
+      programmer's intentions and transform runtime disasters into compile-time errors.
+
+\item \textbf{The Lambda Calculus} ---
+      Computation has a minimal, precise core: variables, abstraction ($\lambda x.\ e$),
+      and application ($e_1\ e_2$). Beta reduction is the one rule that drives all
+      computation. The Church-Rosser theorem guarantees that evaluation order does not
+      matter for the final result.
+
+\item \textbf{Simple Types} ---
+      Adding types to the lambda calculus eliminates nonsensical programs. The function
+      type $A \to B$ is the type of a computation that transforms an $A$ into a $B$.
+      The typing judgment $\Gamma \vdash e : T$ means ``in context $\Gamma$, expression
+      $e$ has type $T$.'' Well-typed programs cannot go wrong (the progress and
+      preservation theorems).
+
+\item \textbf{Type Inference} ---
+      The Hindley--Milner algorithm infers types by generating constraints (type equations)
+      from the structure of the program and solving them by unification. A fresh type
+      variable is assigned to each unknown, and constraints are unified to find the most
+      general solution. The result is the principal type: the most general type the
+      expression can have.
+
+\item \textbf{Parametric Polymorphism} ---
+      System F extends the lambda calculus with type abstraction ($\Lambda \alpha.\ e$)
+      and type application ($e\ [T]$). A polymorphic function works uniformly for every
+      type. By the parametricity theorem, the type alone constrains what the function
+      can do: the identity function is the only inhabitant of $\forall\alpha.\ \alpha
+      \to \alpha$.
+
+\item \textbf{Subtyping and Variance} ---
+      $S <: T$ means ``every $S$ can be used where a $T$ is expected.'' Variance
+      determines how subtyping relates container types: covariant ($F(S) <: F(T)$ when
+      $S <: T$), contravariant (the reverse), or invariant (neither). Function types
+      are contravariant in their argument and covariant in their result. These are
+      mathematical necessities, not language design choices.
+
+\item \textbf{Algebraic Data Types} ---
+      Product types ($A \times B$: both) and sum types ($A + B$: one or the other) are
+      the fundamental building blocks of data. Their cardinalities satisfy $|A \times B|
+      = |A| \cdot |B|$ and $|A + B| = |A| + |B|$. The same algebraic laws that hold for
+      numbers hold for types. Making illegal states unrepresentable is the primary design
+      goal.
+
+\item \textbf{Type Algebra} ---
+      Types form a semiring. Function types are exponentiation. The laws of algebra ---
+      distributivity, commutativity of sums, associativity of products --- hold for types,
+      and the corresponding type isomorphisms are witnessed by explicit conversion functions.
+      You can even differentiate a type with respect to a field to get the zipper (the
+      type of one-hole contexts).
+
+\item \textbf{Recursive Types} ---
+      Types can be defined in terms of themselves. A list is either empty or a head with
+      a tail list. The recursion principle for such types is the fold (catamorphism): any
+      function from the recursive type can be factored through the fold. Well-founded
+      structural recursion on inductive types always terminates.
+
+\item \textbf{Dependent Types} ---
+      In dependent type theory, types may mention values. \code{Vector n} is the type of
+      vectors of length exactly $n$. The append function has type $\mathsf{Vector}\ m \to
+      \mathsf{Vector}\ n \to \mathsf{Vector}\ (m+n)$. C++ templates parameterized by
+      \code{std::size\_t} and \code{constexpr} are the closest practical approximation
+      available in mainstream use.
+
+\item \textbf{Higher-Kinded Types} ---
+      Type constructors have kinds: \code{vector} has kind $\Type \to \Type$. A functor
+      is a type constructor with a structure-preserving map. Monads sequence computations
+      in a structured context. Template template parameters and concept constraints on
+      type constructors give C++ access to this level of abstraction.
+
+\item \textbf{Constraints and Concepts} ---
+      A concept is a predicate on types. Concept satisfaction forms a partial order with
+      subsumption. \code{requires} clauses are bounded quantifiers. Overload resolution
+      prefers more constrained candidates. C++20 concepts replace SFINAE with readable,
+      first-class constraint expressions that generate intelligible error messages.
+
+\item \textbf{SFINAE and Template Metaprogramming} ---
+      ``Substitution Failure Is Not An Error'' is the mechanism for overload-set pruning
+      at instantiation time. Template specialization is pattern matching on types.
+      \code{enable\_if} is a type-level conditional. Type traits are type-level predicates.
+      Every TMP pattern is a type-theory concept made concrete in C++ syntax.
+
+\item \textbf{The Curry--Howard Correspondence} ---
+      Types are propositions; programs are proofs; type checking is proof verification;
+      evaluation is proof normalization. Product types are conjunction; sum types are
+      disjunction; function types are implication; the unit type is truth; the empty type
+      is falsehood. This correspondence is exact, constructive, and transforming in its
+      implications for how we understand programming.
+
+\item \textbf{Advanced Topics: Session Types and Beyond} ---
+      Session types encode communication protocols in the type system, ensuring that
+      messages are sent and received in the correct order. Linear types ensure resources
+      are used exactly once. Refinement types attach logical predicates to types.
+      Gradual typing integrates static and dynamic checking. The frontiers of type theory
+      are actively expanding.
+
+\item \textbf{Putting It All Together} ---
+      Types are not just annotations for the compiler. They are a way of thinking about
+      programs: a discipline for expressing invariants, preventing bugs, documenting
+      intent, and connecting programming to mathematics. The practitioner's toolkit ---
+      strong types, sum types for state, concepts for constraints, making illegal states
+      unrepresentable --- flows directly from the theory. Knowing the theory makes you a
+      more deliberate designer, a more effective debugger, and a programmer who can read
+      the landscape of type systems across languages.
+
+\end{enumerate}
+\end{takeaway}
+
+\bigskip
+
+\noindent
+Types, in the end, are how we make promises to ourselves and to each other --- promises
+that we intend to keep, promises that the compiler will hold us to, promises that outlast
+any individual programmer and persist in the code itself. Learning to make those promises
+precisely is, perhaps, the deepest skill a programmer can develop.
+
+Go write well-typed code. The compiler is on your side.

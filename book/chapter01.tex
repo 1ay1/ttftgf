@@ -1,0 +1,924 @@
+\chapter{What Are Types, Really?}
+
+\begin{quote}
+\textit{``A type is not just a tag on a variable. It is a contract, a proof, a promise about the future behavior of your program.''}
+\end{quote}
+
+\noindent
+Let's start with an honest confession: most programmers use types every day without really thinking about what they are. You declare \code{int x = 42;} in C++ and move on. You write \code{bool flag = true;} and never pause to ask: what does it \emph{mean} for something to be a \typename{bool}? Why does the compiler care? What fundamental idea is being captured when we say that \code{42} has the type \typename{int} and \code{true} has the type \typename{bool}?
+
+This chapter is about slowing down and really looking at that question. Not because you need to know this to write a for-loop, but because understanding what types \emph{are} --- at a deep level --- will change how you think about programs, safety, correctness, and ultimately how you design software. By the end of this book, you will see types as one of the most beautiful and powerful ideas in all of computer science. But we have to start at the beginning.
+
+So: what is a type, really?
+
+\section{The Untyped World: A Terrifying Thought Experiment}
+
+Before we can appreciate what types \emph{give} us, let's think hard about what the world looks like without them.
+
+Imagine you are writing a program and there are no types whatsoever. Your computer's memory is one long array of bytes --- which is actually not far from physical reality. Every value, no matter what it logically represents, is stored as a sequence of bits. The number 65 is stored as the bit pattern \code{01000001}. The ASCII character \code{'A'} is \emph{also} stored as the bit pattern \code{01000001}. The boolean value ``true'' might be stored as \code{00000001}. From the machine's point of view, these are all the same thing: a bag of bits.
+
+In an untyped world, you would write programs like this:
+
+\begin{lstlisting}[style=pseudocode]
+# Untyped pseudocode -- no type declarations anywhere
+x = 65
+y = x + 1        # Is this 66 (arithmetic) or 'B' (ASCII)?
+z = not x        # Does this even make sense?
+print(x)         # Does this print 65 or 'A'?
+\end{lstlisting}
+
+The question ``is this arithmetic or string manipulation?'' cannot be answered by looking at the code. It depends entirely on \emph{how you intended to use} the value. The computer doesn't know your intentions. It just manipulates bits.
+
+This is not a hypothetical nightmare --- it was \emph{reality} in early programming. Assembly language is largely untyped in this sense. Registers hold bit patterns. Whether you treat a register as a signed integer, an unsigned integer, a memory address, or a float is entirely up to the programmer. The hardware has no idea.
+
+\begin{cppconnection}[C++ and the Untyped Substrate]
+Even in C++, this untyped substrate is lurking beneath the surface. C gives you tools to peek at it directly:
+
+\begin{lstlisting}[style=cpp]
+#include <cstring>
+#include <cstdio>
+
+int main() {
+    float f = 1.0f;
+    int i;
+
+    // Reinterpret the bytes of 'f' as an 'int'
+    // This is legal C but deeply dangerous
+    std::memcpy(&i, &f, sizeof(i));
+
+    // Prints: 1065353216
+    // That's the IEEE 754 bit pattern for 1.0f!
+    printf("%d\n", i);
+
+    return 0;
+}
+\end{lstlisting}
+
+Here we have taken a \typename{float} and physically read its bits as if they were an \typename{int}. The result is meaningless from a mathematical standpoint, but the machine happily complies. Types are the layer that \emph{prevents} you from doing this accidentally.
+\end{cppconnection}
+
+Now let's think about what goes wrong in an untyped world with a concrete, realistic example. Suppose you are building a system that manages employee salaries and employee IDs. Both are represented as integers. In an untyped world:
+
+\begin{lstlisting}[style=pseudocode]
+employee_id = 1042
+salary = 75000
+
+# Oops -- did the programmer swap these?
+pay_employee(salary, employee_id)
+# This pays employee 75000 the salary of $1042
+# The compiler cannot catch this
+\end{lstlisting}
+
+This is a \emph{semantic} error that looks perfectly fine syntactically. Both arguments are integers. The machine cannot tell you anything went wrong until you have accidentally paid the wrong people or corrupted your database.
+
+The disaster gets worse. In an untyped world, what stops you from using a salary as a pointer to memory? What stops you from treating a function pointer as an integer and doing arithmetic on it? The answer in a truly untyped system is: nothing. And this is precisely the class of vulnerabilities that buffer overflows and format string attacks exploit --- they trick the program into treating one kind of data as another kind.
+
+\begin{keyinsight}[The Core Problem Types Solve]
+In an untyped world, the only thing preventing nonsensical operations is programmer discipline. Types are a formal mechanism for encoding your intentions into the program itself, allowing the language implementation to \emph{verify} those intentions automatically. They transform a runtime disaster into a compile-time error.
+\end{keyinsight}
+
+Some programming languages --- particularly older scripting languages --- are indeed very loosely typed. JavaScript, for instance, will happily let you write:
+
+\begin{lstlisting}[style=pseudocode]
+// JavaScript
+console.log(1 + "2");   // "12" (string concatenation!)
+console.log(1 - "2");   // -1   (arithmetic subtraction!)
+console.log([] + []);   // ""   (two empty arrays add to empty string?!)
+console.log([] + {});   // "[object Object]"
+console.log({} + []);   // 0    (in some contexts)
+\end{lstlisting}
+
+JavaScript does have types --- it just tries very hard to \emph{coerce} values from one type to another automatically, often with results that surprise even experienced programmers. This is the dark side of weak or dynamic typing: the language tries to be helpful and ends up being confusing. Types, when done well, should make your program \emph{more} predictable, not less.
+
+\section{Types as Classification: The Most Basic Idea}
+
+Okay, so the untyped world is a nightmare. Types save us. But what \emph{are} they?
+
+The simplest possible answer --- and it is correct as far as it goes --- is that a type is a \textbf{classification of values}. A type is a label that groups certain values together and says: ``these values are all the same kind of thing.''
+
+Think about how human beings naturally categorize the world. A biologist doesn't just see individual organisms --- they see species, genera, families, kingdoms. When a biologist says ``that is a \emph{Canis lupus familiaris}'', they are assigning a type. That classification tells you something about the organism: it has four legs, it eats meat, it can bark, it is likely friendly toward humans. The \emph{type} encodes shared properties.
+
+A librarian doesn't just see individual books --- they see mystery novels, biographies, textbooks, reference works. The type ``mystery novel'' tells you something about the book: it probably has a crime to be solved, a detective, a reveal at the end. The classification is useful because it tells you what you can \emph{expect} from things of that type.
+
+Types in programming work the same way. When you say a value has type \typename{int}, you are making a classification:
+
+\begin{definition}
+A \textbf{type} is a label or classification that groups values together based on shared properties. All values of the same type are expected to:
+\begin{enumerate}
+    \item Have the same range of possible values (or a defined set of possible values)
+    \item Support the same set of operations
+    \item Be represented in memory in a compatible way
+\end{enumerate}
+\end{definition}
+
+Let's make this concrete. The type \typename{int} in C++ classifies:
+\begin{itemize}
+    \item Values: $\ldots, -2, -1, 0, 1, 2, \ldots$ (up to some implementation-defined range, typically $-2^{31}$ to $2^{31} - 1$ on 32-bit systems)
+    \item Operations: addition, subtraction, multiplication, division, modulo, bitwise operations, comparisons
+    \item Representation: 4 bytes (usually), two's complement encoding
+\end{itemize}
+
+The type \typename{bool} classifies:
+\begin{itemize}
+    \item Values: \code{true} and \code{false} (just two!)
+    \item Operations: logical AND (\code{\&\&}), logical OR (\code{||}), logical NOT (\code{!}), comparisons
+    \item Representation: typically 1 byte (though only 1 bit is logically needed)
+\end{itemize}
+
+The type \typename{std::string} classifies:
+\begin{itemize}
+    \item Values: all finite sequences of characters
+    \item Operations: concatenation, indexing, substring extraction, length, comparison
+    \item Representation: heap-allocated buffer plus size and capacity metadata
+\end{itemize}
+
+\begin{intuition}
+Think of a type as an \emph{exclusive club}. To be a member of the \typename{int} club, you must be an integer within a certain range. To be a member of the \typename{bool} club, you must be either true or false. The club membership doesn't just tell you who belongs --- it tells you what members are \emph{allowed to do}.
+\end{intuition}
+
+This classification idea scales up enormously. Consider the type \code{std::vector<int>}: it classifies all finite ordered sequences of integers. Consider \code{std::map<std::string, int>}: it classifies all dictionaries that map strings to integers. Consider a custom type:
+
+\begin{lstlisting}[style=cpp]
+struct Employee {
+    int         id;
+    std::string name;
+    double      salary;
+};
+\end{lstlisting}
+
+The type \typename{Employee} classifies all values that are triples of (an integer, a string, a double). Notice how we are now building \emph{new} types from existing ones --- this is the beginning of the type algebra we will explore deeply in later chapters.
+
+\section{The Set-Theoretic View: Types as Sets of Values}
+
+The classification idea naturally leads to a more mathematically precise formulation. If a type classifies certain values, then a type is essentially a \emph{set of values}. This is the \textbf{set-theoretic view of types}, and it is one of the most fundamental perspectives in type theory.
+
+\begin{definition}
+In the \textbf{set-theoretic interpretation}, a type $T$ is identified with the set of all values that belong to that type. We write $v : T$ to mean ``$v$ is a member of type $T$'', which is analogous to the set-membership notation $v \in T$.
+
+The members of a type are called its \textbf{inhabitants}. The set of inhabitants of type $T$ is sometimes written $\llbracket T \rrbracket$.
+\end{definition}
+
+Let's enumerate the inhabitants of some simple types:
+
+\begin{align*}
+\llbracket \Bool \rrbracket &= \{ \mathtt{true}, \mathtt{false} \} \\
+\llbracket \Unit \rrbracket &= \{ \mathtt{unit} \} \quad \text{(a type with exactly one inhabitant)} \\
+\llbracket \Void \rrbracket &= \emptyset \quad \text{(a type with no inhabitants)} \\
+\llbracket \Nat \rrbracket &= \{ 0, 1, 2, 3, \ldots \} \\
+\llbracket \mathtt{int} \rrbracket &= \{ -2^{31}, \ldots, -1, 0, 1, \ldots, 2^{31} - 1 \} \quad \text{(on a 32-bit system)}
+\end{align*}
+
+This notation might look abstract, but it is just formal language for something you already know intuitively. The type \typename{bool} has two possible values. The type \typename{int} has about 4 billion possible values. A type with no possible values (\typename{void} in a certain sense) is the empty set.
+
+\begin{keyinsight}[Why the Set View Matters]
+The set-theoretic view gives us a precise language for asking questions about types. For example:
+\begin{itemize}
+    \item How many distinct values does type $T$ have? (The \emph{cardinality} of the set $\llbracket T \rrbracket$)
+    \item Is type $S$ a \emph{subtype} of type $T$? This corresponds to asking: is $\llbracket S \rrbracket \subseteq \llbracket T \rrbracket$?
+    \item What is the type of all values that are \emph{either} an $S$ or a $T$? This corresponds to the set union $\llbracket S \rrbracket \cup \llbracket T \rrbracket$.
+\end{itemize}
+\end{keyinsight}
+
+Let's think about cardinality for a moment, because it will come up repeatedly in this book.
+
+\begin{example}
+How many distinct values does each type have?
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Type} & \textbf{Inhabitants} & \textbf{Count} \\
+\midrule
+\typename{void} (as unit type)  & just one trivial value & 1 \\
+\typename{bool}                  & \{\code{true}, \code{false}\} & 2 \\
+\typename{char} (8-bit)          & 0 through 255 & 256 \\
+\typename{int} (32-bit)          & $-2^{31}$ through $2^{31}-1$ & $2^{32} \approx 4.3 \times 10^9$ \\
+\typename{double} (64-bit)       & IEEE 754 doubles & $2^{64}$ (including NaN variants) \\
+\typename{std::string}           & all finite char sequences & $\infty$ (countably) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Notice that \typename{double} has a \emph{finite} number of inhabitants even though it represents real numbers --- because floating-point numbers are a discrete, finite approximation of the continuum. This matters! It means there are real numbers that cannot be exactly represented as a \typename{double}.
+\end{example}
+
+Now here's where the set view gets really interesting. What about \emph{compound} types? Consider a pair of booleans. In C++ you might write \code{std::pair<bool, bool>}. How many inhabitants does it have?
+
+Each component can be \code{true} or \code{false}, giving us four combinations:
+\[
+\llbracket \mathtt{pair<bool, bool>} \rrbracket = \{ (\mathtt{true}, \mathtt{true}),\ (\mathtt{true}, \mathtt{false}),\ (\mathtt{false}, \mathtt{true}),\ (\mathtt{false}, \mathtt{false}) \}
+\]
+
+The cardinality is $2 \times 2 = 4$. In general, the cardinality of a product type (a struct, a tuple, a pair) is the \emph{product} of the cardinalities of its components. This is why such types are called \textbf{product types} --- and this is one of the first hints that there is beautiful algebra lurking inside the type system.
+
+\begin{cppconnection}[Struct Types as Set Products]
+In C++, a \code{struct} is exactly a product type. Its set of values is the Cartesian product of the sets of values of its fields:
+
+\begin{lstlisting}[style=cpp]
+// Point2D has bool x bool x bool inhabitants?
+// No -- it has int x int inhabitants
+struct Point2D {
+    int x;
+    int y;
+};
+
+// How many distinct Point2D values exist?
+// Cardinality(int) * Cardinality(int)
+// = 2^32 * 2^32 = 2^64
+// That's about 18.4 quintillion distinct points!
+
+// RGB color: each channel 0-255
+struct RGB {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+};
+
+// Cardinality: 256 * 256 * 256 = 16,777,216
+// (which is exactly why there are about 16 million distinct colors)
+\end{lstlisting}
+
+The cardinality calculation isn't just trivia --- it tells you how much state your type can represent, which directly relates to how much memory it needs and how thoroughly you can test it.
+\end{cppconnection}
+
+What about \emph{sum types} --- types that represent ``either this or that''? We will explore these in depth in later chapters, but the key point is that their cardinality is a \emph{sum}. A type that is ``either an \typename{int} or a \typename{bool}'' has $2^{32} + 2$ inhabitants. This additive structure is why they are called sum types.
+
+And what about function types? The type \code{bool -> bool} (functions from bool to bool) has how many inhabitants? Well, a function from \{true, false\} to \{true, false\} is determined by its outputs on each input. There are two choices for each of two inputs, giving $2^2 = 4$ distinct functions:
+
+\begin{align*}
+f_1(\mathtt{true}) &= \mathtt{true},  & f_1(\mathtt{false}) &= \mathtt{true}  & \text{(constant true)}\\
+f_2(\mathtt{true}) &= \mathtt{false}, & f_2(\mathtt{false}) &= \mathtt{false} & \text{(constant false)}\\
+f_3(\mathtt{true}) &= \mathtt{true},  & f_3(\mathtt{false}) &= \mathtt{false} & \text{(identity)}\\
+f_4(\mathtt{true}) &= \mathtt{false}, & f_4(\mathtt{false}) &= \mathtt{true}  & \text{(negation)}
+\end{align*}
+
+The cardinality of \code{A -> B} is $|B|^{|A|}$ --- the number of inhabitants of the output type raised to the power of the number of inhabitants of the input type. This is why function types are sometimes called \textbf{exponential types}. The type algebra is: products multiply, sums add, functions exponentiate.
+
+We have, hiding inside your everyday C++ type system, the arithmetic of elementary school: addition, multiplication, and exponentiation.
+
+\begin{keyinsight}[Types Have Arithmetic]
+The structure of types mirrors the structure of arithmetic:
+\begin{itemize}
+    \item \textbf{Product types} (\code{struct}, \code{pair}, \code{tuple}): cardinality \emph{multiplies}
+    \item \textbf{Sum types} (\code{variant}, \code{union}, \code{optional}): cardinality \emph{adds}
+    \item \textbf{Function types}: cardinality exponentiates
+\end{itemize}
+This is called the \textbf{algebra of types}, and it is one of the deepest ideas in type theory. We will develop it fully in Chapter 5.
+\end{keyinsight}
+
+\section{The Behavioral View: Types as Defining Operations}
+
+The set-theoretic view tells us \emph{which values} belong to a type. But there is a second, equally important question: \emph{what can you do with} a value of a given type?
+
+This is the \textbf{behavioral view} of types, and it is in many ways more practical. When a C++ programmer sees \typename{std::vector<int>}, they immediately think: ``I can push to the back, access elements by index, get the size, iterate over it.'' The type communicates not just what values exist, but what operations are available.
+
+\begin{definition}
+The \textbf{behavioral view} of types identifies a type with the set of operations that can be performed on values of that type. Two types are considered equivalent if they support exactly the same operations with the same semantics.
+\end{definition}
+
+This view is central to \textbf{object-oriented programming} and to a concept called \textbf{interface} or \textbf{abstract type}. When you define a class in C++ with public methods, you are defining a behavioral contract: ``anything of this type can do these things.''
+
+\begin{lstlisting}[style=cpp]
+class Shape {
+public:
+    virtual double area() const = 0;
+    virtual double perimeter() const = 0;
+    virtual void draw() const = 0;
+    virtual ~Shape() = default;
+};
+\end{lstlisting}
+
+The class \typename{Shape} here is not defining a set of values --- it is defining a \emph{behavioral contract}. A \typename{Circle} and a \typename{Rectangle} are both shapes not because they share the same bit representation, but because they both support the \code{area()}, \code{perimeter()}, and \code{draw()} operations.
+
+This behavioral perspective is sometimes called \textbf{duck typing} in informal usage: ``if it walks like a duck and quacks like a duck, it is a duck.'' A value has a type if and only if it supports the required behaviors.
+
+\begin{cppconnection}[Concepts: Behavioral Types in Modern C++]
+C++20 introduced \textbf{concepts}, which are precisely a formal mechanism for behavioral typing. A concept specifies what operations a type must support:
+
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+#include <iostream>
+#include <vector>
+#include <list>
+
+// A concept defining what it means to be "Printable"
+// (behaviorally: you can stream it to std::ostream)
+template<typename T>
+concept Printable = requires(T t, std::ostream& os) {
+    { os << t } -> std::same_as<std::ostream&>;
+};
+
+// A concept for "Sortable containers"
+template<typename T>
+concept SortableContainer = requires(T container) {
+    { container.begin() } -> std::input_or_output_iterator;
+    { container.end() }   -> std::input_or_output_iterator;
+    { container.size() }  -> std::convertible_to<std::size_t>;
+    requires std::totally_ordered<
+        typename T::value_type
+    >;
+};
+
+// This function works for ANY type satisfying SortableContainer
+// The "type" here is defined behaviorally, not structurally
+template<SortableContainer C>
+void print_sorted(C container) {
+    std::sort(container.begin(), container.end());
+    for (const auto& elem : container) {
+        std::cout << elem << ' ';
+    }
+    std::cout << '\n';
+}
+\end{lstlisting}
+
+Notice that \code{print\_sorted} doesn't care whether you pass a \code{std::vector<int>} or a \code{std::deque<int>} or any other sortable container. The behavioral contract is what matters, not the specific structural type.
+\end{cppconnection}
+
+The behavioral view becomes particularly powerful when we think about \textbf{type classes} in languages like Haskell, or \textbf{traits} in Rust. These are essentially named collections of behaviors. A type ``belongs to'' a type class if it implements all the required behaviors. We will explore this deeply in Chapters 7 and 8.
+
+For now, notice that the behavioral view and the set-theoretic view are \emph{complementary}, not competing. A good type system gives you both: it tells you what values a type contains \emph{and} what you can do with those values. The set-theoretic view is more fundamental from a mathematical perspective; the behavioral view is more practical for programming.
+
+\section{The Syntactic View: Types as a Tool for Rejection}
+
+We have seen types as classifiers of values and as specifications of behavior. Now let us consider a third, and perhaps the most practically important, view: \textbf{types as a mechanism for rejecting bad programs before they run.}
+
+This is the \textbf{syntactic} or \textbf{proof-theoretic} view. From this perspective, the job of the type system is to look at your source code and determine whether it is \emph{well-typed} --- that is, whether every operation is applied to arguments of the appropriate types. A type checker is a program that reads your source code and either says ``this is fine'' or ``this is a type error.''
+
+\begin{definition}
+A program is \textbf{well-typed} if every expression in the program has a type, and every operation is applied to operands of the expected types. A \textbf{type error} occurs when an operation is applied to operands of incompatible types. A type system \textbf{rejects} a program if it cannot be proven well-typed.
+\end{definition}
+
+Let's see what this looks like in practice. Consider these C++ snippets:
+
+\begin{lstlisting}[style=cpp]
+// Well-typed: adding two ints gives an int
+int x = 5 + 3;
+
+// Well-typed: comparing two ints gives a bool
+bool big = (x > 100);
+
+// TYPE ERROR: can't add an int and a string
+// The compiler catches this BEFORE running
+int y = 5 + "hello";  // Error: no match for operator+
+
+// TYPE ERROR: can't call a non-function
+int z = 42;
+z(10);  // Error: '42' is not callable
+
+// Well-typed but logically questionable:
+// (The type system is not omniscient!)
+int divide = 10 / 0;  // Compiles, but undefined behavior at runtime
+\end{lstlisting}
+
+The compiler acts as a \emph{first line of defense}. It screens your program for a certain class of errors before you ever run it. This is enormously valuable.
+
+But notice the last example carefully. The type system says \code{10 / 0} is fine --- both operands are \typename{int}, division of \typename{int} by \typename{int} is a valid operation, and the result is an \typename{int}. The type system cannot see that 0 is a dangerous divisor. The type system is not a general bug-finder; it is a specific kind of partial analysis.
+
+\begin{warning}[What Type Systems Cannot Do]
+Type systems check \emph{structural} properties of your program --- the shapes and sizes of data. They generally cannot check:
+\begin{itemize}
+    \item Whether indices are in bounds
+    \item Whether a divisor is non-zero
+    \item Whether a pointer is non-null (in most languages)
+    \item Whether a function will terminate
+    \item Whether your algorithm is correct
+\end{itemize}
+More expressive type systems (like those in Coq, Agda, or Idris) can actually encode some of these properties. This is the frontier of type theory, and we will get there by Chapter 14.
+\end{warning}
+
+The syntactic view gives rise to a precise computational question: given a program, can we \emph{algorithmically decide} whether it is well-typed? For most practical type systems (including C++), the answer is yes (though C++ template instantiation can make this very slow in practice). For more expressive type systems, this question becomes undecidable --- you cannot always automatically check whether a program is type-correct.
+
+\begin{cppconnection}[C++'s Type Checking in Action]
+The C++ type system performs an enormous amount of checking at compile time. Consider what the compiler verifies when you write something like:
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <algorithm>
+#include <string>
+
+// The compiler checks:
+// 1. That 'data' is a vector of something
+// 2. That the something (std::string) is comparable
+// 3. That the lambda's parameter type matches
+// 4. That the lambda returns bool
+// 5. That std::sort's requirements are met
+int main() {
+    std::vector<std::string> data = {"banana", "apple", "cherry"};
+
+    std::sort(data.begin(), data.end(),
+              [](const std::string& a, const std::string& b) {
+                  return a < b;
+              });
+
+    return 0;
+}
+\end{lstlisting}
+
+All of this checking happens before a single instruction executes. If you accidentally wrote \code{const int\& a} instead of \code{const std::string\& a} in the lambda, the compiler would tell you immediately --- not after you have deployed to production and a customer hits an edge case.
+\end{cppconnection}
+
+The syntactic view reveals something profound: \textbf{type checking is a form of automated reasoning.} The compiler is not just a translator --- it is, in a limited sense, a proof assistant. It is checking logical properties of your program. This observation, developed formally, leads directly to one of the deepest ideas in all of computer science: the connection between types and logic.
+
+\section{Static vs.\ Dynamic Typing: A Deep Dive}
+
+You have probably heard the terms ``statically typed'' and ``dynamically typed'' before. But what do they mean precisely, and what are the real trade-offs?
+
+\begin{definition}
+A language is \textbf{statically typed} if type checking occurs at \emph{compile time} --- before the program runs. The types of all expressions must be determinable from the source code alone, without running the program.
+
+A language is \textbf{dynamically typed} if type checking occurs at \emph{runtime} --- as the program executes. Types are attached to values (not variables), and operations are checked when they are actually performed.
+\end{definition}
+
+Examples: C, C++, Java, Rust, Haskell, OCaml are statically typed. Python, Ruby, JavaScript, Lisp are dynamically typed.
+
+\begin{example}[Dynamic Typing in Python]
+In Python, variables do not have types --- \emph{values} do. A variable is just a name bound to a value, and you can rebind it to any value at any time:
+
+\begin{lstlisting}[style=pseudocode]
+# Python
+x = 42          # x is bound to an int
+x = "hello"     # x is now bound to a str -- perfectly legal!
+x = [1, 2, 3]   # x is now a list
+
+# Type errors are caught at runtime
+def add(a, b):
+    return a + b
+
+add(1, 2)         # Works: 3
+add("a", "b")     # Works: "ab" (string concatenation)
+add(1, "hello")   # TypeError at runtime: unsupported operand type(s)
+                  # for +: 'int' and 'str'
+\end{lstlisting}
+
+Python attaches type information to each \emph{object} in memory. When you call \code{add(1, "hello")}, Python looks at the types of both values at runtime and realizes it doesn't know how to add an integer and a string. Only then does it raise an error.
+\end{example}
+
+Now let's compare this to the C++ experience:
+
+\begin{lstlisting}[style=cpp]
+// C++ -- all types must be known at compile time
+int add(int a, int b) {
+    return a + b;
+}
+
+// This simply does not compile:
+// add(1, "hello");  // Error: cannot convert 'const char*' to 'int'
+
+// The type system rejects this program entirely
+// You never even get an executable
+\end{lstlisting}
+
+The key difference: in a dynamically typed language, you ship your program and discover type errors when users trigger those code paths. In a statically typed language, you cannot even build your program if it has type errors.
+
+\begin{keyinsight}[Static Typing as a Theorem About Your Program]
+Here is a beautiful way to think about static typing: \textbf{a well-typed C++ program comes with a proof that certain errors cannot occur.} When the C++ compiler accepts your program, it is certifying that:
+\begin{itemize}
+    \item No function is called with arguments of the wrong type
+    \item No field is accessed that doesn't exist in the struct
+    \item No operation is applied to an incompatible operand
+\end{itemize}
+This is a \emph{theorem} --- a mathematical statement about your program's behavior. The type checker has verified this theorem automatically, just by reading your source code. Dynamic typing defers this verification to runtime (or skips it entirely, with consequences).
+\end{keyinsight}
+
+The trade-offs between static and dynamic typing are real and important. Let us think through them honestly.
+
+\textbf{Arguments for static typing:}
+
+\begin{enumerate}
+    \item \textbf{Earlier error detection.} Type errors are caught at build time, not in production. This is enormously valuable for large systems.
+
+    \item \textbf{Better tooling.} When the compiler knows the type of every expression, IDEs can provide accurate autocompletion, refactoring tools, and instant error highlighting. Dynamic languages struggle with this.
+
+    \item \textbf{Documentation.} Type signatures serve as machine-verified documentation. The signature \code{int compute(double input, bool flag)} tells you exactly what the function expects and returns, and the compiler ensures this is true.
+
+    \item \textbf{Performance.} Static typing allows the compiler to generate more efficient code. When it knows that \code{x} is always an \typename{int}, it can use efficient integer instructions directly, without runtime type checks or boxing.
+
+    \item \textbf{Safety guarantees.} In a sound type system (more on soundness shortly), a well-typed program provably cannot exhibit certain classes of errors.
+\end{enumerate}
+
+\textbf{Arguments for dynamic typing:}
+
+\begin{enumerate}
+    \item \textbf{Flexibility.} You can write polymorphic code without having to specify types. This is great for rapid prototyping and scripting.
+
+    \item \textbf{Shorter code in some cases.} Without type annotations everywhere, code can be terser, especially for small scripts.
+
+    \item \textbf{Easier metaprogramming.} When types are values you can inspect at runtime, it is easier to write programs that manipulate programs.
+
+    \item \textbf{Duck typing.} If a value supports the operation you want, you can use it --- you don't need to declare an interface first. This is convenient but risky.
+\end{enumerate}
+
+\begin{warning}[The ``Dynamic is More Flexible'' Misconception]
+A common argument is that dynamic typing is more flexible or expressive. This was historically true: early type systems were too rigid and rejected many useful programs. But modern static type systems (especially with features like generics, algebraic data types, type inference, and type classes) are extremely expressive. The claim that you need dynamic typing for flexibility is less and less true. Haskell, Rust, and Scala are all statically typed but extremely expressive. The flexibility argument for dynamic typing is largely a historical artifact.
+\end{warning}
+
+There is a subtler point worth making. The static vs.\ dynamic distinction is not binary. Languages can be \textbf{gradually typed} (like TypeScript adding types to JavaScript, or Python's type hints with mypy). They can have \textbf{type inference} (like Haskell or modern C++ with \code{auto}), where you don't always have to write type annotations but the compiler still checks them. The type-checking landscape is a spectrum.
+
+\begin{cppconnection}[C++ Type Inference with auto]
+Modern C++ significantly reduces the annotation burden with \code{auto}, which lets the compiler \emph{infer} the type while still checking it statically:
+
+\begin{lstlisting}[style=cpp]
+#include <map>
+#include <string>
+#include <vector>
+
+int main() {
+    // Without type inference: painful
+    std::map<std::string, std::vector<int>>::iterator it1;
+
+    // With auto: the compiler figures it out
+    std::map<std::string, std::vector<int>> data = {
+        {"alice", {1, 2, 3}},
+        {"bob",   {4, 5, 6}}
+    };
+
+    // 'auto' infers the iterator type automatically
+    auto it = data.begin();
+
+    // Works for lambdas too
+    auto add = [](int a, int b) { return a + b; };
+
+    // And for structured bindings (C++17)
+    for (auto& [name, scores] : data) {
+        // 'name' is std::string, 'scores' is std::vector<int>
+        // The compiler knows this! It's still statically typed.
+    }
+
+    return 0;
+}
+\end{lstlisting}
+
+The key insight: \code{auto} does not make C++ dynamic. Types are still checked at compile time. \code{auto} just means ``compiler, please figure out the type for me, but still enforce it strictly.'' This is type \emph{inference}, not dynamic typing.
+\end{cppconnection}
+
+\section{Type Systems as Logics: A First Glimpse}
+
+So far we have three views of types: sets of values, behavioral contracts, and compile-time rejection criteria. Now I want to plant a seed that will grow throughout this entire book: \textbf{types are connected to logic in a profound way.}
+
+This connection, known as the \textbf{Curry-Howard correspondence} (or Curry-Howard isomorphism), is one of the most surprising and beautiful ideas in computer science. We will not prove it here --- that takes chapters of buildup. But I want you to start feeling the connection now.
+
+Here is the basic idea. In logic, we have \textbf{propositions} --- statements that can be true or false. For example:
+\begin{itemize}
+    \item ``It is raining'' (could be true or false)
+    \item ``$2 + 2 = 4$'' (true)
+    \item ``$2 + 2 = 5$'' (false)
+\end{itemize}
+
+In logic, we also have \textbf{proofs} --- demonstrations that a proposition is true. If I show you my derivation that $2 + 2 = 4$ from the axioms of arithmetic, I have given you a proof of that proposition.
+
+Now here is the stunning parallel:
+
+\begin{keyinsight}[The Curry-Howard Correspondence (First Glimpse)]
+There is a deep correspondence between types and logic:
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Type Theory} & \textbf{Logic} \\
+\midrule
+A type $T$ & A proposition $P$ \\
+A value of type $T$ & A proof of proposition $P$ \\
+An empty type (no inhabitants) & A false proposition (no proofs) \\
+A non-empty type & A true proposition (has a proof) \\
+A function type $A \to B$ & An implication $A \Rightarrow B$ \\
+A product type $A \times B$ & A conjunction $A \wedge B$ \\
+A sum type $A + B$ & A disjunction $A \vee B$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Writing a program of type $T$ is the same as constructing a proof of the proposition $T$. \textbf{Programs are proofs.}
+\end{keyinsight}
+
+Let me give you just a taste of this idea with a concrete example. In logic, we know the following is always true: ``if $P$ implies $Q$, and $P$ is true, then $Q$ is true.'' This is called \emph{modus ponens}.
+
+In type theory, this corresponds to: if you have a function of type $P \to Q$ and a value of type $P$, you can produce a value of type $Q$. That is just \emph{function application.}
+
+\begin{lstlisting}[style=cpp]
+// In C++: modus ponens in disguise!
+// If we have: a function (P -> Q) and a value of type P
+// We can produce a value of type Q
+
+// P = int, Q = std::string
+auto intToString = [](int n) -> std::string {
+    return std::to_string(n);
+};
+
+int value = 42;                       // We have a value of type P (int)
+std::string result = intToString(value); // We get a value of type Q (string)
+// This is literally modus ponens!
+\end{lstlisting}
+
+It feels almost too simple. But this simple observation, generalized to more sophisticated type systems, gives us proof assistants that can verify mathematical theorems, programming languages where types encode security properties, and the ability to write programs that are correct by construction.
+
+We will build this connection carefully and rigorously over the coming chapters. For now, just hold onto this idea: \textbf{a type is like a proposition, and a value is like a proof.} If a type has inhabitants (values), the corresponding proposition is true. If a type is empty (no values), the proposition is false.
+
+\begin{intuition}
+The type \typename{void} in C++ (as a \emph{return} type) means ``this function returns nothing.'' In the logical reading, it corresponds to... well, not quite the empty proposition. C++'s void is actually more like the unit type (one trivial proof). The genuinely empty type, corresponding to a false proposition, is one that you literally cannot construct a value of --- we will see this clearly when we study the bottom type in later chapters.
+\end{intuition}
+
+\section{The Cost of Types: What Do You Give Up?}
+
+We have been enthusiastic about types. Now let's be honest about their costs.
+
+Types are not free. They impose constraints. And sometimes those constraints are frustrating, especially when you know your program is correct but the type checker disagrees.
+
+\textbf{Cost 1: Types can be too conservative.} A type system can only reason about your program's \emph{structure}, not its \emph{semantics}. Consider:
+
+\begin{lstlisting}[style=cpp]
+// We know this is safe: x is always even, so x/2 is always exact
+// But the type system doesn't know x is even!
+int halve(int x) {
+    // x might be odd: the type system can't tell
+    return x / 2;
+}
+
+// We know this array access is safe: i < 10 always holds in context
+// But the type system doesn't track this invariant
+int array[10];
+int get(int i) {
+    return array[i];  // Might be out of bounds -- type system can't tell
+}
+\end{lstlisting}
+
+The type system rejects no program here, but it also provides no guarantee about the invariants \emph{you} know hold. Conversely, in trying to enforce rules it \emph{can} check, it may reject programs you know are safe.
+
+\textbf{Cost 2: Type annotations can be verbose.} In older languages and type systems, you had to write types everywhere. This is tedious:
+
+\begin{lstlisting}[style=cpp]
+// C-style: explicit types everywhere
+std::map<std::string, std::vector<std::pair<int, double>>>::iterator it;
+std::map<std::string, std::vector<std::pair<int, double>>> m;
+for (std::map<std::string, std::vector<std::pair<int, double>>>::iterator
+     it = m.begin(); it != m.end(); ++it) { ... }
+\end{lstlisting}
+
+Modern C++ largely solves this with \code{auto} and type inference, but the fundamental tension remains: more precise types often mean more things to write.
+
+\textbf{Cost 3: Types can make some valid programs unwritable.} There are programs that are provably correct --- that will never crash or produce wrong output --- but that no type checker can verify. This is a mathematical fact, related to the incompleteness theorems of logic. We will discuss this in the next section.
+
+\textbf{Cost 4: Type system complexity.} C++'s type system is legendarily complex. Template metaprogramming can produce error messages that are pages long. Learning to work with a sophisticated type system takes time and effort.
+
+\begin{example}[When the Type System Gets in Your Way]
+Suppose you want to write a container that can hold values of different types:
+
+\begin{lstlisting}[style=cpp]
+// What if we want a list of mixed types?
+// [1, "hello", 3.14, true]
+// C++ doesn't allow this directly:
+
+// Option 1: std::any (type-erased, loses static typing)
+#include <any>
+#include <vector>
+std::vector<std::any> mixed = {1, "hello", 3.14, true};
+// But now you have to cast to get values back, and it can throw at runtime
+
+// Option 2: std::variant (sum type, but must enumerate types in advance)
+#include <variant>
+using MyValue = std::variant<int, std::string, double, bool>;
+std::vector<MyValue> values = {1, std::string("hello"), 3.14, true};
+// Better: static, but requires knowing the types upfront
+\end{lstlisting}
+
+Python would let you just write \code{[1, "hello", 3.14, True]} without a second thought. The dynamic typing makes this natural. Whether the static typing discipline of C++ is worth this friction is a genuine trade-off, and different applications make different choices.
+\end{example}
+
+The right attitude is: types are a tool, not a religion. A good type system gives you enormous safety guarantees at relatively low cost. A poorly designed type system can make simple programs painful to write. The field of type theory is, in large part, the study of how to make type systems as \emph{expressive} as possible while maintaining strong \emph{safety} guarantees.
+
+\section{Soundness and Completeness: What Makes a Type System Good?}
+
+We keep saying that types prevent errors. But how confident can we really be? What guarantees does a type system actually provide? To answer this rigorously, we need two key concepts: \textbf{soundness} and \textbf{completeness}.
+
+\subsection{Soundness: The Important One}
+
+\begin{definition}
+A type system is \textbf{sound} if every program that the type checker \emph{accepts} is actually safe --- that is, it does not produce type errors at runtime. Formally: if $\vdash e : T$ (the program $e$ type-checks at type $T$), then evaluating $e$ either produces a value of type $T$ or diverges (loops forever), but does \emph{not} produce a type error.
+
+This is sometimes phrased as: \textbf{``well-typed programs don't go wrong.''}
+\end{definition}
+
+Soundness is the critical property. If a type system is sound, you can trust it. When the compiler says ``your program is well-typed,'' you have a genuine guarantee: certain classes of errors cannot occur at runtime.
+
+Without soundness, the type system is a lie. It promises safety and doesn't deliver. Sadly, some widely-used type systems are not fully sound --- C++ has several holes in its type system (unchecked casts, undefined behavior, uninitialized memory), and Java's covariant arrays are famously unsound.
+
+\begin{lstlisting}[style=cpp]
+// A soundness hole in C++: reinterpret_cast
+// The type system is "tricked" into thinking this is fine
+int x = 42;
+float* fp = reinterpret_cast<float*>(&x);  // Legal C++, but accessing *fp
+                                            // is undefined behavior
+float bad = *fp;  // The type system says this is a float
+                  // The laws of physics say it's nonsense
+\end{lstlisting}
+
+C++ sacrifices soundness in certain places for \emph{performance} and \emph{low-level control}. This is a deliberate design choice. Languages like Rust make the opposite choice: the safe subset of Rust is sound, and you must explicitly opt out of soundness guarantees using \code{unsafe} blocks.
+
+\subsection{Completeness: The Unattainable Ideal}
+
+\begin{definition}
+A type system is \textbf{complete} if every program that is actually safe --- every program that will not produce type errors at runtime --- is \emph{accepted} by the type checker. Formally: if evaluating $e$ never produces a type error for any input, then $\vdash e : T$ for some type $T$.
+\end{definition}
+
+Completeness means the type checker never false-alarms. If your program is safe, the type checker won't reject it. This sounds desirable, but here is the bad news:
+
+\begin{theorem}[Incompleteness of Type Systems]
+No type system that is both sound and decidable (i.e., the type checker always terminates) can be complete. There will always be safe programs that the type checker rejects.
+\end{theorem}
+
+This is a consequence of Rice's theorem (from computability theory) applied to type systems. Essentially, it is impossible to algorithmically decide all semantic properties of programs. There will always be programs that are safe in practice but that the type checker cannot prove safe.
+
+\begin{example}[A Safe Program the Type Checker Rejects]
+Consider this pseudocode:
+
+\begin{lstlisting}[style=pseudocode]
+// This function always returns an int
+// because the Collatz conjecture (probably) guarantees termination
+function collatz_steps(n: nat): int {
+    if (n == 1) return 0;
+    if (n % 2 == 0) return 1 + collatz_steps(n / 2);
+    else return 1 + collatz_steps(3 * n + 1);
+}
+\end{lstlisting}
+
+Is this function total (does it always return)? No one knows --- proving it terminates for all inputs would prove the Collatz conjecture, which is one of the most famous unsolved problems in mathematics. A conservative type checker would reject this as potentially non-terminating. But it has never been found to diverge in practice.
+
+This is a simple example of a program that is (probably) safe but cannot be typed without solving a hard mathematical problem.
+\end{example}
+
+\begin{keyinsight}[The Soundness-Completeness Trade-off]
+Every practical type system must choose: it can be \emph{sound} (never accept unsafe programs) or it can be \emph{complete} (never reject safe programs), but not both.
+
+Most production type systems choose soundness, which means they will occasionally reject programs that are actually safe. This is the right trade-off: false alarms (rejected safe programs) are annoying but correctable. False passes (accepted unsafe programs) can lead to crashes and security vulnerabilities.
+
+The art of type system design is minimizing the number of safe programs that get rejected, while maintaining soundness.
+\end{keyinsight}
+
+The gap between what a type system can prove and what is actually true is called the \textbf{semantic gap}. Decades of programming language research have been devoted to closing this gap --- to designing type systems that are expressive enough to accept a wider class of safe programs while remaining decidable and sound.
+
+\begin{cppconnection}[C++'s Explicit Escape Hatches]
+C++ acknowledges the soundness-completeness tension by providing explicit mechanisms to override the type system when you know better:
+
+\begin{lstlisting}[style=cpp]
+// static_cast: "trust me, I know this derived class pointer
+//               is actually a Derived*"
+Base* base = get_some_base();
+Derived* d = static_cast<Derived*>(base);  // No runtime check
+// Undefined behavior if base is not actually a Derived*
+
+// dynamic_cast: "check at runtime, return nullptr if wrong"
+Derived* d2 = dynamic_cast<Derived*>(base);  // Safe -- checked at runtime
+if (d2 != nullptr) { ... }
+
+// reinterpret_cast: "completely reinterpret the bits"
+// Almost always a sign that you're doing something dangerous
+int* ip = reinterpret_cast<int*>(some_pointer);
+\end{lstlisting}
+
+These escape hatches are intentionally named differently from each other, with \code{reinterpret\_cast} being the most dangerous and most obviously named. C++ wants you to think twice before using them. This is a practical design compromise: sound by default, with explicit unsafe overrides.
+\end{cppconnection}
+
+\section{A Taxonomy of Type Systems}
+
+Before we map out the rest of the book, it is useful to understand the landscape of type systems that exist in the wild. They vary along several dimensions.
+
+\subsection{By Strength}
+
+Type systems range from very \textbf{weak} (permissive, little checking) to very \textbf{strong} (strict, much checking). C's type system is relatively weak: it allows many implicit conversions and has \code{void*} which can become any pointer type. Haskell's type system is strong: there are almost no implicit conversions, and the type checker is very strict.
+
+\subsection{By Expressivity}
+
+Some type systems can only express simple classifications (``this is an integer''). Others can express complex invariants (``this array has exactly $n$ elements, and $n > 0$''). The more expressive a type system, the more properties it can guarantee --- but usually at the cost of more complexity for the programmer.
+
+\subsection{By Inference}
+
+How much can the type system \emph{figure out} without you telling it? C requires you to annotate almost everything. Haskell can infer the types of most expressions entirely. Modern C++ (with \code{auto}) is in between.
+
+\subsection{By Checking Time}
+
+Static (compile time), dynamic (runtime), or a combination. We have already discussed this extensively.
+
+\subsection{The Hierarchy of Type Systems}
+
+There is a famous classification of type systems called the \textbf{Lambda Cube}, which organizes type systems by three orthogonal axes:
+\begin{itemize}
+    \item \textbf{Terms depending on types} (polymorphism/generics)
+    \item \textbf{Types depending on types} (type operators/higher-kinded types)
+    \item \textbf{Types depending on terms} (dependent types)
+\end{itemize}
+
+The simplest type systems (like classic C) are at one corner: no generics, no type operators, no dependent types. The most powerful type systems (like Coq's calculus of constructions) are at the opposite corner: all three dimensions enabled. We will build toward the far corner over the course of this book.
+
+\section{A Roadmap: What This Book Will Teach You}
+
+You now have a bird's-eye view of the type theory landscape. Let me tell you where we are going and why each destination matters.
+
+\textbf{Chapters 2--3: The Simply Typed Lambda Calculus.}
+Before we can understand complex type systems, we need a minimal foundation. The lambda calculus is the simplest programming language with functions. We strip away everything --- no loops, no data structures, no I/O --- and study what types mean in this minimal setting. This gives us the core typing rules that everything else builds on.
+
+\textbf{Chapters 4--5: Algebraic Data Types.}
+Products, sums, and their algebra. We will make precise the observation that types have arithmetic, and show how this leads to the rich data modeling capabilities of languages like Haskell and Rust. We will implement these ideas in C++ using \typename{std::variant}, \typename{std::optional}, and custom types.
+
+\textbf{Chapters 6--7: Polymorphism and Generics.}
+What does it mean for a function to work on values of \emph{any} type? This is the first axis of the Lambda Cube: terms depending on types. We will cover parametric polymorphism (C++ templates, Java generics) and ad-hoc polymorphism (overloading, type classes, concepts).
+
+\textbf{Chapters 8--9: Type Inference.}
+How does the compiler figure out types without you writing them? The Hindley-Milner type inference algorithm is one of the most elegant pieces of computer science. Understanding it will change how you think about both programming and logic.
+
+\textbf{Chapters 10--11: Subtyping and Variance.}
+When is one type a subtype of another? This is the theory behind object-oriented inheritance, but also behind many subtle bugs. What does it mean for a container of cats to be a container of animals? (Spoiler: it's more subtle than you think.)
+
+\textbf{Chapters 12--13: The Curry-Howard Correspondence.}
+We will finally develop the deep connection between types and logic that we glimpsed in this chapter. Propositions are types, proofs are programs, logical operations are type constructors. This is the heart of theoretical type theory.
+
+\textbf{Chapters 14--15: Dependent Types.}
+The most powerful type systems allow types to depend on values. A type can say ``a list of exactly $n$ elements'' where $n$ is a value computed at runtime (but checked at compile time). This is the frontier of practical type theory, and it is rapidly becoming mainstream.
+
+\textbf{Chapter 16: Linear Types and Ownership.}
+The theory behind Rust's ownership system. Linear types track resources so that the type system can guarantee you never use freed memory, never have data races, and always release resources properly. We will show how Rust's borrow checker is a linear type system in disguise.
+
+By the end, you will understand not just \emph{how} to use C++'s type system, but \emph{why} it works the way it does, what its limitations are, and what more powerful type systems look like. You will be able to read academic type theory papers, understand the motivation behind language design decisions, and write safer, more expressive code.
+
+\begin{exercise}
+Before moving on, think about these questions:
+\begin{enumerate}
+    \item Write down all the types you use in a typical C++ program. For each type, identify: (a) its set of inhabitants (approximately), (b) the key operations it supports.
+
+    \item Consider the type \code{std::optional<int>}. How many inhabitants does it have? (Hint: it can be either empty or contain an int.) In the algebra of types, what is this equivalent to?
+
+    \item Think of a program you have written that had a runtime error. Could a more expressive type system have caught it at compile time? What would the type need to express?
+
+    \item Consider the claim: ``dynamic typing makes programs easier to write.'' When do you think this is true? When is it false? Can you think of an example where static typing would have saved you from a real bug?
+
+    \item Look at this C++ function signature: \code{void process(int* data, int size)}. What does the type tell you? What important information does it \emph{not} tell you? How might you rewrite the signature using C++ types to communicate more information?
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+Think about the following C++ program:
+
+\begin{lstlisting}[style=cpp]
+enum class Direction { North, South, East, West };
+
+int movement_delta(Direction d) {
+    switch (d) {
+        case Direction::North: return  1;
+        case Direction::South: return -1;
+        // Forgot East and West!
+    }
+    return 0;  // Unreachable? Or reachable?
+}
+\end{lstlisting}
+
+\begin{enumerate}
+    \item Is this program well-typed? Does it compile?
+    \item Is it correct? What does it do for \code{Direction::East}?
+    \item What does this illustrate about the limits of type checking?
+    \item How could you modify the code (perhaps using a different type) to make the compiler warn you about the missing cases?
+\end{enumerate}
+\end{exercise}
+
+\section{Summary: Everything We Know So Far}
+
+We have covered a lot of ground in this first chapter. Let us take stock.
+
+We began with the terrifying untyped world, where memory is just bytes and programs can confuse integers with pointers, salaries with employee IDs, characters with numbers. Types save us from this chaos by providing structure that the compiler can verify.
+
+We explored three complementary views of what types are:
+\begin{enumerate}
+    \item \textbf{Set-theoretic}: A type is a set of values (its inhabitants). The cardinality of this set tells us how many distinct values the type has. Product types multiply cardinalities; sum types add them; function types exponentiate them.
+    \item \textbf{Behavioral}: A type is a collection of operations that can be performed on values of that type. This view underlies interfaces, type classes, and concepts.
+    \item \textbf{Syntactic/proof-theoretic}: A type system is a formal mechanism for rejecting ill-formed programs before they run. Type checking is automated reasoning about program correctness.
+\end{enumerate}
+
+We examined the static vs.\ dynamic typing trade-off. Static typing catches errors at compile time, enables better tooling, serves as machine-verified documentation, and makes optimization easier. Dynamic typing offers flexibility and conciseness for certain use cases. The trend in modern languages is toward rich static type systems with type inference, giving you safety without excessive verbosity.
+
+We glimpsed the Curry-Howard correspondence: the shocking fact that types correspond to logical propositions and values correspond to proofs. We will develop this into a complete theory over the coming chapters.
+
+We discussed soundness (well-typed programs don't go wrong) and completeness (safe programs are accepted), and why you cannot have both in a decidable type system. Practical type systems choose soundness and accept that they will occasionally reject safe programs.
+
+And we have mapped out the journey ahead: from the lambda calculus foundation, through algebraic data types and polymorphism, to type inference, subtyping, the Curry-Howard correspondence, dependent types, and linear types.
+
+The road is long but the scenery is extraordinary. Let's get started.
+
+\begin{takeaway}[Chapter 1: Key Takeaways]
+\begin{itemize}
+    \item \textbf{Without types, memory is just bytes.} Everything can be confused with everything else, leading to security vulnerabilities, data corruption, and incorrect results that are invisible to the compiler.
+
+    \item \textbf{Types classify values} --- they group values together based on shared properties, supported operations, and memory representation.
+
+    \item \textbf{The set-theoretic view:} A type is a set of inhabitants. Product types multiply cardinalities ($|A \times B| = |A| \cdot |B|$), sum types add them ($|A + B| = |A| + |B|$), and function types exponentiate them ($|A \to B| = |B|^{|A|}$). Types have algebra.
+
+    \item \textbf{The behavioral view:} A type specifies what operations you can perform on its values. This is the foundation of interfaces, type classes, concepts, and duck typing.
+
+    \item \textbf{The syntactic view:} A type system rejects ill-typed programs at compile time. Type checking is automated reasoning, and well-typed programs come with formal guarantees.
+
+    \item \textbf{Static typing} catches errors before runtime, enables better tooling, and allows performance optimizations. \textbf{Dynamic typing} offers flexibility at the cost of deferred error detection. Type inference lets you have static safety with reduced annotation burden.
+
+    \item \textbf{Types and logic are deeply connected} (Curry-Howard): types are propositions, values are proofs. A type with no inhabitants corresponds to a false proposition. This connection is the heart of type theory.
+
+    \item \textbf{Soundness} means the type checker never accepts unsafe programs (``well-typed programs don't go wrong''). \textbf{Completeness} means it never rejects safe programs. By Rice's theorem, you cannot have both --- practical type systems choose soundness.
+
+    \item \textbf{Type systems exist on a spectrum} of strength, expressivity, and inference capability. The richer the type system, the more errors it can catch --- but at the cost of greater complexity.
+
+    \item The journey ahead takes us from the lambda calculus to dependent types: building a complete, rigorous understanding of what types are and how they make programs safe, correct, and beautiful.
+\end{itemize}
+\end{takeaway}

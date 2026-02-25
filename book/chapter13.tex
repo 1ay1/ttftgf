@@ -1,0 +1,1563 @@
+\chapter{SFINAE, Type Traits, and Compile-Time Dispatch}
+\label{ch:sfinae-type-traits}
+
+\begin{quote}
+\textit{``The C++ template system is, accidentally, a Turing-complete compile-time functional programming language. SFINAE is how you write conditionals in that language.''}
+\end{quote}
+
+\noindent
+We have spent several chapters building up the theoretical foundations of type systems: the Curry-Howard correspondence, polymorphism, type classes, subtyping. Now we are going to get our hands dirty. This chapter is about \emph{real C++} --- specifically, the mechanisms that C++ provides for doing type-level computation before C++20 introduced concepts.
+
+This is not just historical curiosity. SFINAE and type traits are \emph{everywhere}: in the standard library, in every large C++ codebase, in countless open-source libraries. You will encounter them when reading code, when debugging template instantiation errors, and when writing generic libraries yourself. But more than that, understanding SFINAE will show you something profound: the C++ template system is, despite its syntactic ugliness, performing genuine \emph{type-theoretic computation}. The ideas we have studied --- predicates on types, conditional dispatch based on type properties, dependent computation --- are all here, wearing different clothes.
+
+Let us dig in.
+
+\section{The Problem Before Concepts}
+\label{sec:problem-before-concepts}
+
+Imagine you are writing a function that computes the absolute value of a number. You want it to work for any numeric type --- \typename{int}, \typename{long}, \typename{float}, \typename{double}. The natural thing to write is a function template:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+T my_abs(T x) {
+    return x < 0 ? -x : x;
+}
+\end{lstlisting}
+
+This works beautifully for numeric types. But what happens if someone passes a \typename{std::string}?
+
+\begin{lstlisting}[style=cpp]
+my_abs(std::string("hello"));
+// Error: binary expression ('std::string' and 'int')
+// has incompatible types
+// ... 40 more lines of template instantiation backtrace
+\end{lstlisting}
+
+The error is real, but the \emph{message} is terrible. The compiler tries to instantiate \code{my\_abs<std::string>}, discovers that \code{x < 0} does not make sense for a string (you cannot compare a string to an integer), and emits an error deep inside the instantiation. The user sees an error pointing at line 3 of your template --- the implementation detail --- not at their call site. They see \emph{your} code's internals, not a clear explanation of what constraint they violated.
+
+This was the state of affairs in C++ for decades. You could write generic functions, but you had no way to say \emph{cleanly}: ``this function only works for arithmetic types.'' If the user passed the wrong type, they got a cryptic error from deep inside your implementation.
+
+\begin{warning}[The Real Cost of Unconstrained Templates]
+Unconstrained templates create two serious problems:
+
+\begin{enumerate}
+    \item \textbf{Terrible error messages.} The compiler reports errors from inside the template body, not from the call site. Errors in heavily nested templates can produce hundreds of lines of output.
+
+    \item \textbf{Surprising instantiations.} A template that \emph{happens} to work for a type you never intended (because the operations you use exist for unrelated reasons) silently compiles, creating incorrect behavior that is harder to debug than a compiler error.
+\end{enumerate}
+
+We want the compiler to check constraints \emph{before} attempting instantiation, not after.
+\end{warning}
+
+There had to be a workaround. C++ programmers found one. It is inelegant, it is mind-bending, and it works. It is called \textbf{SFINAE}.
+
+\section{SFINAE: Substitution Failure Is Not An Error}
+\label{sec:sfinae}
+
+SFINAE is an acronym for \textbf{Substitution Failure Is Not An Error}. It is one of the most important rules in C++ template resolution, and it is the foundation of nearly every pre-concepts technique for constrained polymorphism.
+
+The rule is stated simply:
+
+\begin{keyinsight}[The SFINAE Rule]
+When the compiler tries to use a function template and substituting the template arguments produces \emph{invalid types or expressions in the function's immediate context}, this is \textbf{not a compile error}. The compiler silently removes that overload from consideration and moves on to the next candidate. An error only occurs if \emph{no valid overloads remain}.
+\end{keyinsight}
+
+Let that sink in. The compiler is allowed to \emph{fail} during template substitution and simply say ``never mind, skip this one.'' This failure-without-error is the magic that makes constrained templates possible.
+
+Here is the simplest possible SFINAE example. Suppose we want a function that prints the \code{.size()} of something, but only if the type has a \code{size()} member:
+
+\begin{lstlisting}[style=cpp]
+#include <iostream>
+#include <vector>
+#include <string>
+
+// Overload 1: only valid if T has a .size() member
+// The return type is "decltype(t.size())" -- the type of t.size()
+// If T has no .size(), this return type is invalid -> SFINAE removes it
+template<typename T>
+auto print_size(const T& t) -> decltype(t.size()) {
+    std::cout << "Size: " << t.size() << '\n';
+    return t.size();
+}
+
+// Overload 2: catch-all for types without .size()
+template<typename T>
+void print_size(...) {
+    std::cout << "No size() member\n";
+}
+
+int main() {
+    std::vector<int> v = {1, 2, 3};
+    std::string s = "hello";
+    int x = 42;
+
+    print_size(v);  // "Size: 3"
+    print_size(s);  // "Size: 5"
+    print_size(x);  // "No size() member"
+}
+\end{lstlisting>
+
+What happened here? When the compiler sees \code{print\_size(v)}, it considers both overloads. For Overload 1 with \code{T = std::vector<int>}, the return type \code{decltype(t.size())} is valid (it resolves to \code{std::size\_t}). Good. For \code{T = int}, the expression \code{t.size()} is invalid --- \typename{int} has no \code{size()} member. This is a substitution failure. SFINAE kicks in: the compiler does not error. It simply discards Overload 1 for \typename{int} and falls through to Overload 2.
+
+\begin{intuition}
+Think of template overload resolution like a job application process. The compiler sends your type to every template candidate as an applicant. Each template \emph{interviews} the type by trying to substitute it in. If a candidate template says ``sorry, this type doesn't meet our requirements'' (a substitution failure), the candidate is quietly rejected. Only templates that successfully interview the type are considered for the final selection. SFINAE means ``rejected at interview'' is not the same as ``company goes bankrupt'' --- life goes on.
+\end{intuition}
+
+\begin{definition}[SFINAE --- Formal Statement]
+\label{def:sfinae}
+When the compiler performs template argument deduction and substitution for a function template, if any substitution produces an ill-formed expression or type \emph{in the immediate context of the function's declaration} (return type, parameter types, template parameter list), the substitution failure is not a compile error. That function template is simply excluded from the overload set.
+\end{definition}
+
+Note the critical qualifier: \emph{in the immediate context}. A substitution failure inside the function \emph{body} is still an error. SFINAE only applies to the function's \emph{declaration} --- its signature. This is why all the SFINAE tricks we will see involve crafting signatures carefully.
+
+\section{How SFINAE Works Mechanically}
+\label{sec:sfinae-mechanics}
+
+Let us walk through the full resolution process step by step. This will demystify what the compiler is actually doing.
+
+Suppose we have these two overloads and a call:
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+
+// Overload A: for integral types only
+template<typename T>
+typename std::enable_if<std::is_integral<T>::value, void>::type
+process(T val) {
+    // Integer-specific processing
+}
+
+// Overload B: for floating-point types only
+template<typename T>
+typename std::enable_if<std::is_floating_point<T>::value, void>::type
+process(T val) {
+    // Float-specific processing
+}
+
+int main() {
+    process(42);     // Should call Overload A
+    process(3.14);   // Should call Overload B
+}
+\end{lstlisting}
+
+When the compiler sees \code{process(42)}, here is the step-by-step process:
+
+\begin{enumerate}
+    \item \textbf{Collect candidates.} The compiler finds all functions named \code{process} that might match: Overload A and Overload B.
+
+    \item \textbf{Deduce template arguments.} For both overloads, \code{T} is deduced as \typename{int} (since 42 is an \typename{int}).
+
+    \item \textbf{Substitute.} For Overload A: substitute \typename{int} for \code{T}. The return type becomes \code{std::enable\_if<std::is\_integral<int>::value, void>::type}. Since \typename{int} is integral, \code{std::is\_integral<int>::value} is \code{true}, so \code{enable\_if<true, void>::type} is \code{void}. Valid. Overload A survives.
+
+    \item \textbf{Substitute.} For Overload B: substitute \typename{int}. The return type becomes \code{std::enable\_if<std::is\_floating\_point<int>::value, void>::type}. Since \typename{int} is not floating-point, \code{std::is\_floating\_point<int>::value} is \code{false}. \code{enable\_if<false, void>::type} does not exist --- there is no \code{type} member in \code{enable\_if<false, void>}. \textbf{Substitution failure.} SFINAE discards Overload B.
+
+    \item \textbf{Overload resolution.} Only Overload A remains. Select it.
+
+    \item \textbf{Instantiate.} Generate the code for \code{process<int>} from Overload A's body.
+\end{enumerate}
+
+When the compiler sees \code{process(3.14)}, the same process runs but in reverse: Overload A fails (int check fails for \typename{double}), Overload B succeeds. Perfect dispatch.
+
+\begin{cppconnection}[SFINAE is Overload Selection, Not Dispatch]
+It is important to understand that SFINAE does not \emph{dispatch} at runtime. Everything happens at compile time. The compiler selects one specific overload and generates code only for that one. At runtime, there is just a regular function call --- no branching, no virtual dispatch, no overhead. This is one of C++'s superpowers: zero-cost abstraction.
+\end{cppconnection}
+
+\section{std::enable\_if: The SFINAE Workhorse}
+\label{sec:enable-if}
+
+The \code{std::enable\_if} template is the central tool for applying SFINAE deliberately. Let us understand exactly how it is built, because it is surprisingly simple.
+
+\begin{lstlisting}[style=cpp]
+// The primary template: B is false (or unspecified)
+// No 'type' member -> accessing ::type causes substitution failure
+template<bool B, typename T = void>
+struct enable_if {};
+
+// Partial specialization: B is true
+// Has a 'type' member -> accessing ::type gives T
+template<typename T>
+struct enable_if<true, T> {
+    using type = T;
+};
+\end{lstlisting}
+
+That is the entire implementation. Two lines. The power comes from the combination with SFINAE: if you write \code{typename enable\_if<condition, T>::type} in a function signature, and \code{condition} is \code{false}, then \code{::type} does not exist, causing a substitution failure, causing SFINAE to discard that overload.
+
+\begin{keyinsight}[enable\_if is a Compile-Time If]
+\code{std::enable\_if<B, T>::type} is essentially a compile-time conditional expression:
+\[
+\text{enable\_if}(B, T) = \begin{cases} T & \text{if } B = \text{true} \\ \text{(does not exist)} & \text{if } B = \text{false} \end{cases}
+\]
+When it does not exist and appears in a function declaration, SFINAE eliminates that overload. This is how you implement ``if this type satisfies condition X, enable this function.''
+\end{keyinsight}
+
+There are three standard patterns for using \code{enable\_if}. Let us see all three.
+
+\subsection{Pattern 1: Return Type SFINAE}
+
+The constraint appears in the return type:
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <iostream>
+
+// Only available for integral types
+// Return type is 'void' when T is integral, nonexistent otherwise
+template<typename T>
+typename std::enable_if<std::is_integral<T>::value, void>::type
+print_if_integral(T val) {
+    std::cout << "Integer: " << val << '\n';
+}
+
+int main() {
+    print_if_integral(42);        // Works: "Integer: 42"
+    print_if_integral(3.14);      // Compile error: no matching function
+                                  // (the only candidate was SFINAEd away)
+}
+\end{lstlisting}
+
+This pattern is clean but verbose. The C++14 shorthand \code{std::enable\_if\_t} removes the \code{::type}:
+
+\begin{lstlisting}[style=cpp]
+// C++14 version -- cleaner
+template<typename T>
+std::enable_if_t<std::is_integral<T>::value, void>
+print_if_integral(T val) {
+    std::cout << "Integer: " << val << '\n';
+}
+\end{lstlisting}
+
+\subsection{Pattern 2: Template Parameter SFINAE}
+
+The constraint appears as an extra template parameter with a default value:
+
+\begin{lstlisting}[style=cpp]
+// The extra template parameter defaults to void
+// If the condition is false, the default is ill-formed -> SFINAE
+template<
+    typename T,
+    typename = std::enable_if_t<std::is_integral<T>::value>
+>
+void print_if_integral(T val) {
+    std::cout << "Integer: " << val << '\n';
+}
+\end{lstlisting}
+
+This pattern is popular because it leaves the return type clean, making the function's purpose obvious from its signature. The constraint is tucked into the template parameter list.
+
+\subsection{Pattern 3: Function Parameter SFINAE}
+
+The constraint appears as an extra function parameter with a default value:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+void print_if_integral(
+    T val,
+    std::enable_if_t<std::is_integral<T>::value>* = nullptr
+) {
+    std::cout << "Integer: " << val << '\n';
+}
+\end{lstlisting}
+
+This pattern is less common (it pollutes the function signature with a dummy parameter), but it avoids certain disambiguation problems when you have multiple constrained overloads.
+
+\subsection{Mutual Exclusion with enable\_if}
+
+A common pattern is providing two mutually exclusive overloads:
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <iostream>
+#include <string>
+
+// For arithmetic types
+template<typename T>
+std::enable_if_t<std::is_arithmetic<T>::value, std::string>
+describe(T val) {
+    return "Arithmetic value: " + std::to_string(val);
+}
+
+// For non-arithmetic types
+template<typename T>
+std::enable_if_t<!std::is_arithmetic<T>::value, std::string>
+describe(T val) {
+    return "Non-arithmetic (no string conversion)";
+}
+
+int main() {
+    std::cout << describe(42)            << '\n'; // "Arithmetic value: 42"
+    std::cout << describe(3.14)          << '\n'; // "Arithmetic value: 3.140000"
+    std::cout << describe(std::string{}) << '\n'; // "Non-arithmetic..."
+}
+\end{lstlisting}
+
+The conditions \code{std::is\_arithmetic<T>::value} and \code{!std::is\_arithmetic<T>::value} are complementary --- for any type, exactly one of these two overloads is active.
+
+\begin{warning}[Ambiguity When Conditions Overlap]
+If two \code{enable\_if} conditions can both be true for the same type, the compiler will see two valid overloads and report an ambiguity error. This is a common source of SFINAE bugs. Always ensure your conditions partition the type space cleanly.
+
+\begin{lstlisting}[style=cpp]
+// BUG: both conditions true for long (which is both integral and arithmetic)
+template<typename T>
+std::enable_if_t<std::is_integral<T>::value> f(T x) {}    // Condition A
+
+template<typename T>
+std::enable_if_t<std::is_arithmetic<T>::value> f(T x) {}  // Condition B
+// integral implies arithmetic, so both match for long -> ambiguity!
+\end{lstlisting}
+\end{warning}
+
+\section{Type Traits: Compile-Time Type Introspection}
+\label{sec:type-traits}
+
+SFINAE gives us the mechanism for conditional overloads. But we need \emph{predicates} to put in those conditions --- questions we can ask about types. The \code{<type\_traits>} header provides exactly this: a comprehensive library of compile-time type predicates.
+
+\begin{definition}[Type Trait]
+\label{def:type-trait}
+A \textbf{type trait} is a template class that, given one or more types as template arguments, exposes information about those types at compile time. The simplest type traits expose a boolean \code{value} member (\code{true} or \code{false}) answering a yes/no question about a type. Others expose a \code{type} member that is a derived or transformed type.
+\end{definition}
+
+Here is a tour of the most important traits from the standard library.
+
+\subsection{Classification Traits}
+
+These answer ``what kind of type is this?''
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+
+// Primary type categories
+std::is_void<T>::value         // Is T 'void'?
+std::is_integral<T>::value     // Is T an integer type?
+std::is_floating_point<T>::value // Is T float, double, long double?
+std::is_pointer<T>::value      // Is T a pointer type?
+std::is_reference<T>::value    // Is T a reference type?
+std::is_array<T>::value        // Is T an array type?
+std::is_enum<T>::value         // Is T an enum or enum class?
+std::is_class<T>::value        // Is T a class or struct?
+std::is_function<T>::value     // Is T a function type?
+
+// Composite type categories
+std::is_arithmetic<T>::value   // is_integral || is_floating_point
+std::is_compound<T>::value     // Not a fundamental type
+std::is_object<T>::value       // Not void, function, or reference
+
+// Usage example
+static_assert(std::is_integral<int>::value);
+static_assert(std::is_integral<char>::value);
+static_assert(!std::is_integral<float>::value);
+static_assert(!std::is_integral<std::string>::value);
+\end{lstlisting}
+
+\subsection{Type Property Traits}
+
+These answer ``what properties does this type have?''
+
+\begin{lstlisting}[style=cpp]
+std::is_const<T>::value          // Is T const-qualified?
+std::is_volatile<T>::value       // Is T volatile-qualified?
+std::is_signed<T>::value         // Is T a signed arithmetic type?
+std::is_unsigned<T>::value       // Is T an unsigned arithmetic type?
+std::is_empty<T>::value          // Is T a class with no members?
+std::is_abstract<T>::value       // Does T have pure virtual functions?
+std::is_trivial<T>::value        // Is T trivially constructible/copyable?
+std::is_standard_layout<T>::value // Does T have compatible layout with C?
+
+std::has_virtual_destructor<T>::value  // Does T have a virtual destructor?
+
+// Constructibility and destructibility
+std::is_constructible<T, Args...>::value  // Can T be constructed from Args?
+std::is_default_constructible<T>::value  // Can T be default-constructed?
+std::is_copy_constructible<T>::value     // Can T be copy-constructed?
+std::is_move_constructible<T>::value     // Can T be move-constructed?
+std::is_destructible<T>::value           // Can T be destructed?
+
+// Assignment
+std::is_copy_assignable<T>::value        // Does T support copy assignment?
+std::is_move_assignable<T>::value        // Does T support move assignment?
+\end{lstlisting}
+
+\subsection{Type Relationship Traits}
+
+These compare two or more types:
+
+\begin{lstlisting}[style=cpp]
+std::is_same<T, U>::value         // Are T and U the exact same type?
+std::is_base_of<Base, Derived>::value // Is Base a base class of Derived?
+std::is_convertible<From, To>::value  // Can From be implicitly converted to To?
+std::is_invocable<F, Args...>::value  // Can F be called with Args?
+
+// Examples
+static_assert(std::is_same<int, int>::value);
+static_assert(!std::is_same<int, long>::value);  // Even if same size!
+static_assert(std::is_base_of<std::exception, std::runtime_error>::value);
+static_assert(std::is_convertible<int, double>::value);
+static_assert(!std::is_convertible<std::string, int>::value);
+\end{lstlisting}
+
+\subsection{Type Transformation Traits}
+
+These produce a new, related type:
+
+\begin{lstlisting}[style=cpp]
+// Add/remove qualifiers
+std::add_const<T>::type        // T -> const T
+std::remove_const<T>::type     // const T -> T
+std::add_volatile<T>::type     // T -> volatile T
+std::remove_volatile<T>::type  // volatile T -> T
+std::remove_cv<T>::type        // const volatile T -> T
+
+// Add/remove references
+std::add_lvalue_reference<T>::type  // T -> T&
+std::add_rvalue_reference<T>::type  // T -> T&&
+std::remove_reference<T>::type      // T& or T&& -> T
+
+// Add/remove pointers
+std::add_pointer<T>::type      // T -> T*
+std::remove_pointer<T>::type   // T* -> T
+
+// Decay (what happens when you pass by value)
+std::decay<T>::type            // int[5] -> int*, int& -> int, etc.
+
+// Conditional type selection
+std::conditional<B, T, F>::type  // B ? T : F (at the type level)
+
+// Practical example: remove_reference + remove_const (strip to bare type)
+template<typename T>
+using BareType = std::remove_cv_t<std::remove_reference_t<T>>;
+
+static_assert(std::is_same_v<BareType<const int&>, int>);
+static_assert(std::is_same_v<BareType<volatile double&&>, double>);
+\end{lstlisting}
+
+\begin{cppconnection}[The \_v and \_t Shortcuts (C++17)]
+Starting in C++14/17, the standard library provides shorthand aliases:
+\begin{itemize}
+    \item \code{std::is\_integral\_v<T>} is shorthand for \code{std::is\_integral<T>::value}
+    \item \code{std::remove\_const\_t<T>} is shorthand for \code{std::remove\_const<T>::type}
+\end{itemize}
+These \code{\_v} and \code{\_t} suffixes reduce visual noise significantly. Prefer them in modern code.
+\end{cppconnection}
+
+\section{Writing Custom Type Traits}
+\label{sec:custom-type-traits}
+
+The standard library type traits are useful, but real codebases constantly need custom traits. Understanding how to write them reveals a profound connection to type theory: \textbf{writing a type trait is writing a predicate on types via template specialization}. This is pattern matching at the type level.
+
+\subsection{The false\_type / true\_type Pattern}
+
+The standard library provides two base classes:
+
+\begin{lstlisting}[style=cpp]
+struct false_type {
+    static constexpr bool value = false;
+};
+
+struct true_type {
+    static constexpr bool value = true;
+};
+\end{lstlisting}
+
+Custom traits inherit from one of these. The primary template inherits from \code{false\_type} (the default is ``no''), and specializations for specific types inherit from \code{true\_type} (``yes, for this type'').
+
+\subsection{Example: is\_pointer}
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+
+// Primary template: T is not a pointer by default
+template<typename T>
+struct my_is_pointer : std::false_type {};
+
+// Partial specialization: T* is a pointer
+template<typename T>
+struct my_is_pointer<T*> : std::true_type {};
+
+// Also handle const pointer, volatile pointer, etc.
+template<typename T>
+struct my_is_pointer<T* const> : std::true_type {};
+
+template<typename T>
+struct my_is_pointer<T* volatile> : std::true_type {};
+
+// Test it
+static_assert(!my_is_pointer<int>::value);
+static_assert( my_is_pointer<int*>::value);
+static_assert( my_is_pointer<double* const>::value);
+static_assert(!my_is_pointer<std::string>::value);
+\end{lstlisting}
+
+Look at what is happening here: the partial specialization \code{my\_is\_pointer<T*>} matches any type of the form ``pointer to something.'' The pattern \code{T*} acts as a type pattern, analogous to pattern matching in a functional language. This is how you decompose types.
+
+\begin{intuition}
+Template specialization is C++'s version of pattern matching on types. When you write:
+
+\begin{lstlisting}[style=cpp]
+template<typename T> struct Trait    : false_type {};  // Base case
+template<typename T> struct Trait<T*>: true_type  {};  // Pointer case
+\end{lstlisting}
+
+You are writing something logically equivalent to a Haskell function on types:
+
+\begin{lstlisting}[style=haskell]
+isPointer :: Type -> Bool
+isPointer (Pointer _) = True
+isPointer _           = False
+\end{lstlisting}
+
+The C++ syntax is less clean, but the underlying computation is the same: matching the shape of a type and returning a result.
+\end{intuition}
+
+\subsection{Example: is\_container}
+
+Let us write a more complex trait --- one that checks whether a type has \code{begin()}, \code{end()}, and a \code{value\_type} member:
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <iterator>
+
+// Helper: does T have begin() and end()?
+template<typename T, typename = void>
+struct has_begin_end : std::false_type {};
+
+template<typename T>
+struct has_begin_end<
+    T,
+    std::void_t<
+        decltype(std::declval<T>().begin()),
+        decltype(std::declval<T>().end())
+    >
+> : std::true_type {};
+
+// The full container trait
+template<typename T, typename = void>
+struct is_container : std::false_type {};
+
+template<typename T>
+struct is_container<
+    T,
+    std::void_t<
+        typename T::value_type,
+        typename T::iterator,
+        decltype(std::declval<T>().begin()),
+        decltype(std::declval<T>().end()),
+        decltype(std::declval<T>().size())
+    >
+> : std::true_type {};
+
+// Test
+#include <vector>
+#include <list>
+#include <string>
+
+static_assert( is_container<std::vector<int>>::value);
+static_assert( is_container<std::list<double>>::value);
+static_assert( is_container<std::string>::value);
+static_assert(!is_container<int>::value);
+static_assert(!is_container<double*>::value);
+\end{lstlisting}
+
+This uses \code{std::void\_t<...>} (C++17), a utility that maps any list of valid types to \code{void}, but causes a substitution failure if any of them are invalid. It is the standard idiom for checking multiple type expressions at once.
+
+\subsection{Example: is\_printable}
+
+\begin{lstlisting}[style=cpp]
+// Is T printable to std::ostream?
+template<typename T, typename = void>
+struct is_printable : std::false_type {};
+
+template<typename T>
+struct is_printable<
+    T,
+    std::void_t<decltype(std::cout << std::declval<T>())>
+> : std::true_type {};
+
+static_assert( is_printable<int>::value);
+static_assert( is_printable<std::string>::value);
+
+// Suppose we have a custom type with no operator<<
+struct Opaque {};
+static_assert(!is_printable<Opaque>::value);
+\end{lstlisting}
+
+\section{The Type Theory Behind Type Traits}
+\label{sec:type-theory-traits}
+
+Let us step back and see what we have built through the lens of type theory. This is where things get genuinely beautiful.
+
+Type traits are \textbf{decidable predicates on types}. In the language of logic, a predicate is a function that takes an argument and returns true or false. A decidable predicate is one that can always be computed --- given any input, you can always determine the answer in finite time.
+
+\begin{keyinsight}[Type Traits as Type-Level Predicates]
+A type trait \code{Trait<T>} is a predicate $P : \Type \to \Bool$. It maps every type $T$ to a truth value (\code{true\_type} or \code{false\_type}) at compile time. This is type-level computation: the compiler evaluates $P(T)$ and uses the result to make decisions about which code to generate.
+
+This is exactly the same concept as type class membership in Haskell:
+\begin{itemize}
+    \item \code{std::is\_integral<T>::value} $\Leftrightarrow$ the type \code{T} satisfies the ``integral'' predicate
+    \item \code{Num a} in Haskell $\Leftrightarrow$ the type \code{a} satisfies the \code{Num} predicate
+\end{itemize}
+The mechanism is different; the mathematical content is the same.
+\end{keyinsight}
+
+Let us be more precise. In type theory, we write $\vdash T : \Type$ to mean ``$T$ is a type.'' A type trait corresponds to a \emph{type family}:
+
+\[
+\mathsf{IsIntegral} : \Type \to \Bool
+\]
+
+We can evaluate this at any concrete type:
+\begin{align*}
+\mathsf{IsIntegral}(\mathsf{int}) &= \mathsf{true} \\
+\mathsf{IsIntegral}(\mathsf{float}) &= \mathsf{false} \\
+\mathsf{IsIntegral}(\mathsf{std::string}) &= \mathsf{false}
+\end{align*}
+
+The boolean value computed by the trait ($\mathsf{true}$ or $\mathsf{false}$) is then used to determine which function overload to instantiate. This is \textbf{value-to-code dependency}: the value of a compile-time computation determines which code is generated. This is a limited but real form of \textbf{dependent computation}.
+
+In a fully dependently typed language (like Agda or Idris), you can write types that depend on \emph{runtime} values. In C++, you can write code generation that depends on \emph{compile-time} values. The C++ version is more restricted, but structurally, it is the same idea: a computed value controls which code path is taken.
+
+\begin{cppconnection}[Type Traits and the Propositions-as-Types Correspondence]
+Recall from our study of the Curry-Howard correspondence: propositions are types, and proofs are programs. Type traits fit neatly into this picture:
+
+\begin{itemize}
+    \item \code{std::is\_integral<int>} is a \emph{type} that has an inhabitant (\code{std::true\_type\{\}}) --- it is a true proposition.
+    \item \code{std::is\_integral<float>} is a type with ``value'' \code{false\_type\{\}} --- we can construct it, but it represents falsity.
+    \item Using \code{enable\_if} to select overloads is using these propositions to control code generation.
+\end{itemize}
+
+The type trait machinery is C++'s approximation of the ``propositions as types'' idea, implemented within the limits of a language that was not designed with this in mind.
+\end{cppconnection}
+
+\section{Tag Dispatch}
+\label{sec:tag-dispatch}
+
+Before \code{enable\_if} became popular, there was another technique for compile-time dispatch based on type properties: \textbf{tag dispatch}. It is still widely used and, in many ways, produces cleaner code.
+
+The idea: instead of using SFINAE to eliminate overloads, use type properties to create \emph{tag types} (empty structs representing categories), and then overload on those tags.
+
+The canonical example is iterator categories in the standard library:
+
+\begin{lstlisting}[style=cpp]
+#include <iterator>
+#include <vector>
+#include <list>
+
+// The tag hierarchy (simplified from the standard library)
+struct input_iterator_tag {};
+struct forward_iterator_tag   : input_iterator_tag {};
+struct bidirectional_iterator_tag : forward_iterator_tag {};
+struct random_access_iterator_tag : bidirectional_iterator_tag {};
+
+// Implementation for random access iterators (e.g., vector::iterator)
+// We can jump directly, so advance is O(1)
+template<typename Iterator>
+void advance_impl(Iterator& it, int n, random_access_iterator_tag) {
+    it += n;  // Direct jump -- O(1)
+}
+
+// Implementation for bidirectional iterators (e.g., list::iterator)
+// We must step, but can go both ways
+template<typename Iterator>
+void advance_impl(Iterator& it, int n, bidirectional_iterator_tag) {
+    if (n >= 0) while (n--) ++it;
+    else        while (n++) --it;
+}
+
+// Implementation for input iterators (the most basic)
+// We can only step forward
+template<typename Iterator>
+void advance_impl(Iterator& it, int n, input_iterator_tag) {
+    while (n-- > 0) ++it;
+}
+
+// The public interface: asks the iterator for its category tag
+// and dispatches to the right implementation
+template<typename Iterator>
+void my_advance(Iterator& it, int n) {
+    // iterator_traits<Iterator>::iterator_category gives us the tag type
+    using Tag = typename std::iterator_traits<Iterator>::iterator_category;
+    advance_impl(it, n, Tag{});  // Construct a tag and dispatch on its type
+}
+
+int main() {
+    std::vector<int> v = {1, 2, 3, 4, 5};
+    std::list<int>   l = {1, 2, 3, 4, 5};
+
+    auto vit = v.begin();
+    auto lit = l.begin();
+
+    my_advance(vit, 3);  // Calls advance_impl(..., random_access_iterator_tag{})
+    my_advance(lit, 3);  // Calls advance_impl(..., bidirectional_iterator_tag{})
+}
+\end{lstlisting}
+
+Notice what happened: we never write any \code{enable\_if} or condition. The dispatch is achieved purely through overloading. The tag type acts as a compile-time token that carries type information into the overload resolution process.
+
+\begin{keyinsight}[Tag Dispatch vs.\ enable\_if]
+\begin{itemize}
+    \item \textbf{Tag dispatch} is often cleaner and produces better error messages. Each case is a separate, clearly named function. The dispatch logic is in the public interface function.
+    \item \textbf{enable\_if} is more flexible when the conditions are complex boolean expressions. It can be applied to any function without needing a separate dispatch layer.
+    \item In the standard library, both are used. Tag dispatch is preferred when there is a natural hierarchy (like iterator categories). \code{enable\_if} is preferred for simple binary conditions.
+\end{itemize}
+\end{keyinsight}
+
+\begin{definition}[Tag Dispatch]
+\label{def:tag-dispatch}
+\textbf{Tag dispatch} is a technique where an empty \code{struct} (the tag) encodes a type property. The public interface function extracts the relevant tag from a type trait and passes a constructed instance of the tag to an overloaded implementation function. Overload resolution selects the implementation based on the tag type.
+\end{definition}
+
+Tag dispatch is a form of \textbf{ad-hoc polymorphism resolved at compile time}. The compiler selects the implementation based on the tag type, with zero runtime overhead. From the type theory perspective, tag types are proof witnesses: passing \code{random\_access\_iterator\_tag\{\}} is like passing a proof that the iterator satisfies the random access property.
+
+\section{decltype and declval}
+\label{sec:decltype-declval}
+
+Two features of the C++ language are especially important for writing SFINAE conditions: \code{decltype} and \code{std::declval}. They work together to let you check whether an expression is valid for a given type, without actually evaluating that expression.
+
+\subsection{decltype: Type of an Expression}
+
+\code{decltype(expr)} gives you the type of the expression \code{expr} without evaluating \code{expr}. This is called an \textbf{unevaluated context}.
+
+\begin{lstlisting}[style=cpp]
+int x = 42;
+decltype(x) y = 10;         // y has type int
+decltype(x + 1.0) z = 3.0; // z has type double (int + double -> double)
+
+// decltype with function calls
+std::vector<int> v;
+decltype(v.size()) n = 0;   // n has type std::vector<int>::size_type
+
+// The expression in decltype is NEVER evaluated
+// This is safe even if 'v' is empty
+decltype(v[0]) first = v[0]; // decltype gives 'int&', but v[0] IS evaluated here
+                              // (that's not decltype's job -- just the initializer)
+
+// In a SFINAE context, nothing is evaluated:
+template<typename T>
+auto check(T t) -> decltype(t.foo()); // Is this well-formed? Only if T has foo()
+\end{lstlisting}
+
+\subsection{std::declval: Values Without Construction}
+
+There is a problem with using \code{decltype} in SFINAE: you need a value to call methods on, but you might not be able to construct one (maybe the type has no default constructor). \code{std::declval<T>()} solves this by pretending to create a value of type \code{T} in an unevaluated context.
+
+\begin{lstlisting}[style=cpp]
+#include <utility>   // for std::declval
+
+struct NonDefaultConstructible {
+    NonDefaultConstructible() = delete;
+    void some_method() {}
+};
+
+// Can't write: NonDefaultConstructible{}.some_method()
+// The type has no default constructor!
+
+// But in an unevaluated context, we can use declval:
+using MethodReturnType =
+    decltype(std::declval<NonDefaultConstructible>().some_method());
+// MethodReturnType is 'void' -- we checked the return type without
+// constructing the object at all.
+\end{lstlisting}
+
+\code{std::declval<T>()} produces an rvalue reference to \code{T} in a purely notional sense --- it has no runtime existence. It is solely for use inside \code{decltype} and \code{sizeof} (unevaluated contexts).
+
+\subsection{Expression SFINAE with decltype}
+
+Combining \code{decltype} and \code{declval} gives us \textbf{expression SFINAE}: we can check whether an entire expression involving a type is valid.
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <utility>
+#include <iostream>
+
+// Does T have an operator+ that works with another T?
+template<typename T, typename = void>
+struct is_addable : std::false_type {};
+
+template<typename T>
+struct is_addable<
+    T,
+    std::void_t<
+        decltype(std::declval<T>() + std::declval<T>())
+    >
+> : std::true_type {};
+
+// Does T have a .serialize() member that returns a string?
+template<typename T, typename = void>
+struct has_serialize : std::false_type {};
+
+template<typename T>
+struct has_serialize<
+    T,
+    std::enable_if_t<
+        std::is_same_v<
+            decltype(std::declval<T>().serialize()),
+            std::string
+        >
+    >
+> : std::true_type {};
+
+struct Point { int x, y; };
+struct Serializable {
+    std::string serialize() const { return "data"; }
+};
+
+static_assert(is_addable<int>::value);
+static_assert(is_addable<double>::value);
+static_assert(!is_addable<Point>::value);   // No operator+ for Point
+
+static_assert(!has_serialize<int>::value);
+static_assert(!has_serialize<Point>::value);
+static_assert(has_serialize<Serializable>::value);
+\end{lstlisting}
+
+This is powerful. We are asking the compiler to \emph{speculatively try an expression} and telling us whether it would be valid. This is the backbone of the detection idiom.
+
+\section{The Detection Idiom}
+\label{sec:detection-idiom}
+
+Writing the same \code{void\_t} boilerplate repeatedly is tedious. The \textbf{detection idiom} is a general-purpose pattern (proposed for the standard library as \code{std::experimental::is\_detected}) that encapsulates the pattern:
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <utility>
+
+// The "nonesuch" type: a type that cannot exist
+// Used as a sentinel for "detection failed"
+struct nonesuch {
+    ~nonesuch() = delete;
+    nonesuch()  = delete;
+    nonesuch(nonesuch const&) = delete;
+    void operator=(nonesuch const&) = delete;
+};
+
+// Primary template: detection fails, result is 'nonesuch'
+template<
+    class Default,
+    class AlwaysVoid,
+    template<class...> class Op,
+    class... Args
+>
+struct detector {
+    using value_t = std::false_type;
+    using type = Default;
+};
+
+// Specialization: detection succeeds (Op<Args...> is valid)
+template<
+    class Default,
+    template<class...> class Op,
+    class... Args
+>
+struct detector<Default, std::void_t<Op<Args...>>, Op, Args...> {
+    using value_t = std::true_type;
+    using type = Op<Args...>;
+};
+
+// Public interface
+template<template<class...> class Op, class... Args>
+using is_detected =
+    typename detector<nonesuch, void, Op, Args...>::value_t;
+
+template<template<class...> class Op, class... Args>
+using detected_t =
+    typename detector<nonesuch, void, Op, Args...>::type;
+
+// -------------------------------------------------------
+// Usage: define "feature detectors" as alias templates
+
+// Detector for T::serialize()
+template<typename T>
+using serialize_result = decltype(std::declval<T>().serialize());
+
+// Detector for T::size()
+template<typename T>
+using size_result = decltype(std::declval<T>().size());
+
+// Detector for operator<< with ostream
+template<typename T>
+using stream_result = decltype(std::cout << std::declval<T>());
+
+// Now checking is clean and readable:
+struct Serializable { std::string serialize() const; };
+struct NoSerialize  {};
+
+static_assert( is_detected<serialize_result, Serializable>::value);
+static_assert(!is_detected<serialize_result, NoSerialize>::value);
+
+static_assert( is_detected<size_result, std::string>::value);
+static_assert(!is_detected<size_result, int>::value);
+\end{lstlisting}
+
+The detection idiom is the direct precursor to C++20 concepts. In fact, a concept is essentially a much cleaner syntax for writing a detector and using it to constrain templates. The conceptual structure is identical; the surface syntax is dramatically improved.
+
+\begin{cppconnection}[Detection Idiom as Manual Concept Checking]
+The \code{is\_detected<serialize\_result, T>} check is functionally equivalent to:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+concept Serializable = requires(T t) {
+    { t.serialize() } -> std::same_as<std::string>;
+};
+\end{lstlisting}
+
+The concept version is shorter, clearer, and generates better error messages. But they compute the same predicate: ``does type \code{T} have a \code{serialize()} member returning \code{std::string}?'' Understanding the detection idiom makes concepts less magical --- you can see the machinery underneath.
+\end{cppconnection}
+
+\section{if constexpr: Modern Compile-Time Dispatch}
+\label{sec:if-constexpr}
+
+C++17 introduced a game-changing feature that replaces many SFINAE patterns: \textbf{if constexpr}. This is compile-time branching that is dramatically cleaner than \code{enable\_if}.
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <iostream>
+#include <string>
+
+template<typename T>
+std::string describe(const T& val) {
+    if constexpr (std::is_integral_v<T>) {
+        return "Integer: " + std::to_string(val);
+    } else if constexpr (std::is_floating_point_v<T>) {
+        return "Float: " + std::to_string(val);
+    } else if constexpr (std::is_same_v<T, std::string>) {
+        return "String: " + val;
+    } else {
+        return "Unknown type";
+    }
+}
+
+int main() {
+    std::cout << describe(42)                  << '\n'; // "Integer: 42"
+    std::cout << describe(3.14)                << '\n'; // "Float: 3.140000"
+    std::cout << describe(std::string("hi"))   << '\n'; // "String: hi"
+}
+\end{lstlisting}
+
+The critical difference between \code{if constexpr} and a regular \code{if}:
+
+\begin{keyinsight}[if constexpr Discards Branches]
+In a regular \code{if}, \emph{both} branches are compiled, even if only one will execute. Both branches must be syntactically and semantically valid. In \code{if constexpr}, the branch whose condition is \code{false} is \textbf{discarded} --- it is not compiled, not type-checked, not instantiated. This allows branches to contain code that would be invalid for types that won't take that branch.
+\end{keyinsight}
+
+This is the key enabling feature:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+void process(T val) {
+    if constexpr (std::is_integral_v<T>) {
+        // This line would be a compile error if T = std::string
+        // but it's ONLY compiled when T is integral
+        std::cout << "Value in binary: " << std::bitset<sizeof(T)*8>(val) << '\n';
+    } else {
+        // This branch is compiled for non-integral T
+        std::cout << "Value: " << val << '\n';
+    }
+}
+
+process(42);              // Takes the integral branch
+process(std::string("x")); // Takes the else branch -- bitset branch discarded
+\end{lstlisting}
+
+Without \code{if constexpr}, you would need two separate \code{enable\_if} overloads to achieve the same effect. With \code{if constexpr}, you write a single function with a clean, readable conditional.
+
+\subsection{Replacing enable\_if with if constexpr}
+
+Let us see a before/after comparison. The task: write a function that serializes a value --- using \code{.serialize()} if available, falling back to \code{std::to\_string} for arithmetic types.
+
+\textbf{Before (C++14, enable\_if style):}
+
+\begin{lstlisting}[style=cpp]
+// Option 1: has a .serialize() method
+template<typename T>
+std::enable_if_t<is_detected<serialize_result, T>::value, std::string>
+to_string_safe(const T& val) {
+    return val.serialize();
+}
+
+// Option 2: arithmetic, no .serialize()
+template<typename T>
+std::enable_if_t<
+    std::is_arithmetic_v<T> && !is_detected<serialize_result, T>::value,
+    std::string
+>
+to_string_safe(const T& val) {
+    return std::to_string(val);
+}
+
+// Option 3: neither -- static_assert to give a clear error
+template<typename T>
+std::enable_if_t<
+    !std::is_arithmetic_v<T> && !is_detected<serialize_result, T>::value,
+    std::string
+>
+to_string_safe(const T& val) {
+    static_assert(false, "T must be arithmetic or have .serialize()");
+    return "";
+}
+\end{lstlisting}
+
+\textbf{After (C++17, if constexpr style):}
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+std::string to_string_safe(const T& val) {
+    if constexpr (is_detected<serialize_result, T>::value) {
+        return val.serialize();
+    } else if constexpr (std::is_arithmetic_v<T>) {
+        return std::to_string(val);
+    } else {
+        static_assert(
+            std::is_arithmetic_v<T> || is_detected<serialize_result, T>::value,
+            "T must be arithmetic or have .serialize()"
+        );
+        return ""; // unreachable
+    }
+}
+\end{lstlisting}
+
+The \code{if constexpr} version is one function instead of three, has a clear linear structure, and is dramatically easier to read and maintain. The compiler error from the \code{static\_assert} is also clearer --- it fires at the call site with your custom message, not from deep inside a template.
+
+\subsection{Recursive Templates with if constexpr}
+
+\code{if constexpr} is particularly elegant for recursive template functions that need different base cases:
+
+\begin{lstlisting}[style=cpp]
+#include <tuple>
+#include <iostream>
+
+// Print all elements of a tuple
+template<typename Tuple, std::size_t I = 0>
+void print_tuple(const Tuple& t) {
+    if constexpr (I < std::tuple_size_v<Tuple>) {
+        std::cout << std::get<I>(t);
+        if constexpr (I + 1 < std::tuple_size_v<Tuple>) {
+            std::cout << ", ";
+        }
+        print_tuple<Tuple, I + 1>(t);
+    }
+}
+
+int main() {
+    auto t = std::make_tuple(1, "hello", 3.14, true);
+    print_tuple(t);  // "1, hello, 3.14, 1"
+    std::cout << '\n';
+}
+\end{lstlisting}
+
+The base case (empty tuple) is handled by the \code{if constexpr} check: when \code{I >= tuple\_size}, the body is discarded and recursion stops. No need for template specialization to handle the base case.
+
+\section{SFINAE vs.\ Concepts: The Migration}
+\label{sec:sfinae-vs-concepts}
+
+C++20 concepts are the clean successor to SFINAE. Let us see the same constraint expressed three ways, to appreciate how much clarity concepts bring.
+
+\textbf{Task:} Write a function \code{sum} that adds all elements of a container, for any container type whose \code{value\_type} is arithmetic.
+
+\textbf{Version 1: Unconstrained template (C++98)}
+\begin{lstlisting}[style=cpp]
+// No constraints -- works if T happens to have the right operations
+// But gives horrifying error messages otherwise
+template<typename Container>
+auto sum(const Container& c) {
+    typename Container::value_type result{};
+    for (const auto& elem : c) result += elem;
+    return result;
+}
+\end{lstlisting}
+
+\textbf{Version 2: SFINAE with enable\_if (C++11/14)}
+\begin{lstlisting}[style=cpp]
+template<
+    typename Container,
+    typename = std::enable_if_t<
+        std::is_arithmetic_v<typename Container::value_type>
+    >
+>
+auto sum(const Container& c) {
+    typename Container::value_type result{};
+    for (const auto& elem : c) result += elem;
+    return result;
+}
+// Functional, but constraints are hidden in template parameter list
+// Error messages still reference implementation details
+\end{lstlisting}
+
+\textbf{Version 3: if constexpr with static\_assert (C++17)}
+\begin{lstlisting}[style=cpp]
+template<typename Container>
+auto sum(const Container& c) {
+    static_assert(
+        std::is_arithmetic_v<typename Container::value_type>,
+        "sum requires a container of arithmetic types"
+    );
+    typename Container::value_type result{};
+    for (const auto& elem : c) result += elem;
+    return result;
+}
+// Better error messages, but not truly constraining:
+// the function still participates in overload resolution for wrong types
+\end{lstlisting}
+
+\textbf{Version 4: Concepts (C++20)}
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+#include <ranges>
+
+template<typename C>
+concept ArithmeticContainer = requires {
+    typename C::value_type;
+    requires std::is_arithmetic_v<typename C::value_type>;
+};
+
+template<ArithmeticContainer Container>
+auto sum(const Container& c) {
+    typename Container::value_type result{};
+    for (const auto& elem : c) result += elem;
+    return result;
+}
+// - Constraint is at the function signature, not hidden in template params
+// - Errors are reported at the call site with the concept name
+// - The function is properly excluded from overload resolution for wrong types
+// - Concepts can be composed and reused
+\end{lstlisting}
+
+The progression is clear:
+\begin{enumerate}
+    \item Version 1 has no constraints --- anything goes until it breaks.
+    \item Version 2 adds constraints but hides them and produces poor errors.
+    \item Version 3 improves errors but does not properly constrain overload resolution.
+    \item Version 4 expresses the intent clearly and precisely, at the right location, with good error messages.
+\end{enumerate}
+
+\begin{keyinsight}[Why Concepts Are Better]
+Concepts improve on SFINAE in three ways:
+
+\begin{enumerate}
+    \item \textbf{Error messages}: Concepts produce errors at the call site that say exactly which concept was violated. SFINAE errors trace back into template implementations.
+
+    \item \textbf{Composability}: Concepts can be defined once and reused. \code{ArithmeticContainer} can be combined with other concepts using \code{\&\&} and \code{||}. SFINAE conditions require manual boolean logic that is easy to get wrong.
+
+    \item \textbf{Subsumption}: The compiler understands that \code{std::random\_access\_iterator} implies \code{std::bidirectional\_iterator}. It can resolve overload ambiguities based on which concept is more specific. SFINAE has no such awareness.
+\end{enumerate}
+\end{keyinsight}
+
+\begin{warning}[SFINAE Is Not Dead]
+Despite C++20 concepts, you will encounter SFINAE constantly:
+\begin{itemize}
+    \item All pre-C++20 code in the wild uses SFINAE. This is most of the world's C++ code.
+    \item The C++20 standard library itself uses concepts \emph{and} SFINAE internally.
+    \item Sometimes SFINAE is needed for cases concepts do not yet handle cleanly.
+    \item Understanding SFINAE helps you understand \emph{why} concepts work the way they do.
+\end{itemize}
+Concepts are the future. SFINAE knowledge is still essential for reading existing code and for full understanding.
+\end{warning}
+
+\section{Compile-Time Computation as a Type System Feature}
+\label{sec:compile-time-computation}
+
+Let us stand back and appreciate what we have built. Across this chapter, we have seen:
+
+\begin{itemize}
+    \item \textbf{SFINAE}: conditional overload selection based on type properties
+    \item \textbf{Type traits}: compile-time predicates and transformations on types
+    \item \textbf{Custom traits}: pattern matching on type structure via specialization
+    \item \textbf{Tag dispatch}: using types as compile-time tokens for overload selection
+    \item \textbf{if constexpr}: compile-time branching that discards non-matching branches
+    \item \textbf{decltype/declval}: inspecting expression types without evaluation
+    \item \textbf{Detection idiom}: checking arbitrary type expressions for validity
+\end{itemize}
+
+Taken together, these form a complete system for \textbf{computation at the type level}. The C++ compiler, during template instantiation, is running a program. That program computes over types: it asks questions, makes decisions, and generates different code depending on the answers.
+
+\begin{keyinsight}[The C++ Type System Computes]
+The C++ template instantiation machinery is a complete computing system. It can:
+\begin{itemize}
+    \item Evaluate predicates on types (\code{is\_integral}, custom traits)
+    \item Select between alternatives based on those predicates (\code{enable\_if}, \code{if constexpr})
+    \item Transform types (\code{remove\_const}, \code{decay})
+    \item Recurse (template specialization as recursion)
+    \item Compute integers (\code{sizeof}, \code{alignof}, \code{std::tuple\_size})
+\end{itemize}
+This compile-time computation controls what runtime code is generated. The type system is not just a checker --- it is an \emph{executor}.
+\end{keyinsight}
+
+From a type theory perspective, what we have in C++ is a limited form of \textbf{dependent types}. In a fully dependently typed language, a type can depend on any value, including a runtime value. In C++, types can depend on other types and on compile-time constants. The dependency is more restricted, but the structure is the same: computed values control code.
+
+Here is a concrete illustration of this dependency structure:
+
+\begin{lstlisting}[style=cpp]
+// The return type of this function DEPENDS ON the type T
+// Different T -> different return type -> different generated code
+template<typename T>
+auto process(T val) {
+    if constexpr (std::is_integral_v<T>) {
+        // Return type here is 'long long'
+        return static_cast<long long>(val) * val;
+    } else if constexpr (std::is_floating_point_v<T>) {
+        // Return type here is 'T' (double, float, etc.)
+        return val * val;
+    } else {
+        // Return type here is 'std::string'
+        return std::string("cannot square: ") + typeid(T).name();
+    }
+}
+// process(int)    -> long long
+// process(double) -> double
+// process(Widget) -> std::string
+// Three different return types, one function name
+\end{lstlisting}
+
+This is \emph{type-level computation controlling code generation}. The return type --- itself a type --- is determined by evaluating a predicate at compile time. This is the dependent type idea, constrained to the compile-time world.
+
+\begin{cppconnection}[constexpr: Values Computed at Compile Time]
+\code{constexpr} is the companion to the type-level machinery. While type traits compute over types, \code{constexpr} computes over values at compile time:
+
+\begin{lstlisting}[style=cpp]
+constexpr int factorial(int n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+// Computed at compile time -- no runtime cost
+constexpr int f10 = factorial(10);  // 3628800
+
+// Can be used in type computations
+std::array<int, factorial(5)> arr;  // array of 120 ints
+// The SIZE of the array is a compile-time-computed value
+
+// Template non-type parameters can use constexpr results
+template<std::size_t N>
+struct FixedBuffer { char data[N]; };
+
+FixedBuffer<factorial(4)> buf;  // FixedBuffer<24>
+\end{lstlisting}
+
+Together, \code{constexpr} (value computation) and type traits (type computation) give C++ a rich compile-time language running alongside the runtime language.
+\end{cppconnection}
+
+\section{Advanced SFINAE Patterns}
+\label{sec:advanced-sfinae}
+
+Let us look at a few more patterns that appear frequently in real codebases, to solidify understanding and build practical fluency.
+
+\subsection{Constraining Class Templates}
+
+SFINAE is not just for functions --- you can constrain entire class templates:
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+
+// A numeric accumulator that only works for arithmetic types
+// The second template parameter is the SFINAE gate
+template<
+    typename T,
+    typename = std::enable_if_t<std::is_arithmetic_v<T>>
+>
+class Accumulator {
+    T sum_ = T{};
+public:
+    void add(T val) { sum_ += val; }
+    T total() const { return sum_; }
+};
+
+Accumulator<int>    int_acc;     // OK
+Accumulator<double> dbl_acc;     // OK
+// Accumulator<std::string> str_acc; // Error: no matching class template
+\end{lstlisting}
+
+\subsection{SFINAE with Member Functions}
+
+You can selectively enable or disable individual member functions of a class template:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>
+class SmartWrapper {
+    T value_;
+public:
+    SmartWrapper(T v) : value_(std::move(v)) {}
+
+    // Only available if T is comparable with <
+    template<typename U = T>
+    std::enable_if_t<std::is_arithmetic_v<U>, bool>
+    is_positive() const {
+        return value_ > T{};
+    }
+
+    // Only available if T is printable
+    template<typename U = T>
+    std::enable_if_t<is_detected<stream_result, U>::value>
+    print() const {
+        std::cout << value_ << '\n';
+    }
+
+    T get() const { return value_; }
+};
+
+SmartWrapper<int> wi(42);
+wi.is_positive(); // OK -- int is arithmetic
+wi.print();       // OK -- int is printable
+
+SmartWrapper<std::pair<int,int>> wp({1,2});
+// wp.is_positive(); // Error: pair is not arithmetic
+wp.print();          // Error: pair has no operator<<
+\end{lstlisting}
+
+\subsection{Counting Overloads with SFINAE}
+
+A clever SFINAE trick uses return type size to distinguish which overload was chosen, without actually calling either:
+
+\begin{lstlisting}[style=cpp]
+// Classic SFINAE probe using return type size
+// sizeof(yes) != sizeof(no), so we can distinguish at compile time
+template<typename T>
+struct has_foo {
+private:
+    // These are only used in unevaluated sizeof contexts
+    static std::true_type  test(decltype(&T::foo)*);
+    static std::false_type test(...);
+public:
+    static constexpr bool value = decltype(test(nullptr))::value;
+};
+
+struct WithFoo { void foo(); };
+struct NoFoo   {};
+
+static_assert( has_foo<WithFoo>::value);
+static_assert(!has_foo<NoFoo>::value);
+\end{lstlisting}
+
+Here \code{test} is never called. \code{decltype(test(nullptr))} deduces the return type the compiler would have chosen, selecting between the overloads --- and the return type (\code{true\_type} or \code{false\_type}) encodes the answer as a type. This is pure compile-time computation.
+
+\section{Practical Worked Example: A Type-Safe Printf}
+\label{sec:worked-example}
+
+Let us put everything together in a substantial example: a simplified type-safe printf that uses type traits and SFINAE to format values correctly.
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <string>
+#include <sstream>
+#include <iostream>
+#include <vector>
+
+// ---- Formatting dispatch ----
+
+// Forward declaration of our format function
+template<typename T>
+std::string fmt(const T& val);
+
+// For arithmetic types: use to_string
+template<typename T>
+std::enable_if_t<std::is_arithmetic_v<T>, std::string>
+fmt_impl(const T& val, int /*priority*/) {
+    return std::to_string(val);
+}
+
+// For std::string: wrap in quotes
+std::string fmt_impl(const std::string& val, int /*priority*/) {
+    return "\"" + val + "\"";
+}
+
+// For types with .serialize(): use serialize()
+template<typename T>
+std::enable_if_t<is_detected<serialize_result, T>::value, std::string>
+fmt_impl(const T& val, long /*priority*/) {
+    return val.serialize();
+}
+
+// For containers: format as [a, b, c]
+template<typename T>
+std::enable_if_t<is_container<T>::value, std::string>
+fmt_impl(const T& container, long long /*priority*/) {
+    std::string result = "[";
+    bool first = true;
+    for (const auto& elem : container) {
+        if (!first) result += ", ";
+        result += fmt(elem);
+        first = false;
+    }
+    result += "]";
+    return result;
+}
+
+// Fallback: use typeid name
+template<typename T>
+std::string fmt_impl(const T& val, ...) {
+    return "<" + std::string(typeid(T).name()) + ">";
+}
+
+// The public interface
+template<typename T>
+std::string fmt(const T& val) {
+    return fmt_impl(val, 0);
+}
+
+// ---- Type-safe format string processor ----
+
+// Base case: no more arguments
+std::string format_impl(const std::string& fmt_str, std::size_t pos) {
+    return fmt_str.substr(pos);
+}
+
+// Recursive case: consume one argument
+template<typename First, typename... Rest>
+std::string format_impl(
+    const std::string& fmt_str,
+    std::size_t pos,
+    const First& first,
+    const Rest&... rest
+) {
+    auto brace = fmt_str.find("{}", pos);
+    if (brace == std::string::npos) {
+        return fmt_str.substr(pos);  // No more placeholders
+    }
+    return fmt_str.substr(pos, brace - pos)
+         + fmt(first)
+         + format_impl(fmt_str, brace + 2, rest...);
+}
+
+template<typename... Args>
+std::string format(const std::string& fmt_str, const Args&... args) {
+    return format_impl(fmt_str, 0, args...);
+}
+
+// ---- Demo ----
+
+struct Point {
+    int x, y;
+    std::string serialize() const {
+        return "(" + std::to_string(x) + ", " + std::to_string(y) + ")";
+    }
+};
+
+int main() {
+    std::vector<int> v = {1, 2, 3};
+    Point p{10, 20};
+
+    std::cout << format("int: {}, float: {}, str: {}",
+                        42, 3.14f, std::string("hello")) << '\n';
+    // "int: 42, float: 3.140000, str: "hello""
+
+    std::cout << format("point: {}, vec: {}", p, v) << '\n';
+    // "point: (10, 20), vec: [1, 2, 3]"
+}
+\end{lstlisting}
+
+This example uses:
+\begin{itemize}
+    \item \textbf{Type traits} (\code{is\_arithmetic}, custom \code{is\_container}, \code{is\_detected}) to classify types
+    \item \textbf{SFINAE with enable\_if} to select the right formatting overload
+    \item \textbf{Variadic templates} for the argument list
+    \item \textbf{Recursion at the type level} to process arguments one at a time
+\end{itemize}
+
+This is the kind of code that underlies libraries like \code{fmtlib} (the basis of C++20's \code{std::format}).
+
+\section{Exercises}
+\label{sec:exercises}
+
+\begin{exercise}
+\textbf{SFINAE fundamentals.} Write a function template \code{stringify} that:
+\begin{itemize}
+    \item For arithmetic types, returns \code{std::to\_string(val)}
+    \item For types with a \code{.to\_string()} member, calls that member
+    \item For \code{std::string}, returns the string itself
+    \item For all other types, causes a compile-time error with the message \code{"T is not stringifiable"}
+\end{itemize}
+Test with \code{int}, \code{double}, \code{std::string}, and a custom struct \code{Foo} that has \code{std::string to\_string() const}.
+\end{exercise}
+
+\begin{exercise}
+\textbf{Custom type traits.} Implement the following type traits from scratch (without using \code{std::} equivalents):
+\begin{enumerate}
+    \item \code{my\_is\_reference<T>}: true for \code{T\&} and \code{T\&\&}
+    \item \code{my\_is\_const<T>}: true for \code{const T}
+    \item \code{my\_remove\_pointer<T>}: transforms \code{T*} to \code{T}
+    \item \code{my\_is\_same<T, U>}: true if T and U are the same type
+\end{enumerate}
+Test each with \code{static\_assert}.
+\end{exercise}
+
+\begin{exercise}
+\textbf{Tag dispatch.} Implement a \code{my\_sort} function that:
+\begin{itemize}
+    \item Uses insertion sort for containers smaller than 16 elements (tagged \code{small\_container\_tag})
+    \item Uses \code{std::sort} for larger containers (tagged \code{large\_container\_tag})
+    \item Dispatches via tag dispatch, not \code{enable\_if} or \code{if constexpr}
+\end{itemize}
+The tag should be chosen based on the container's \code{size()} at call time... but wait, that is a runtime value, not a compile-time one. How do you handle this? (Hint: consider a size hint as a template parameter, or reconsider: is tag dispatch always the right tool here?)
+\end{exercise}
+
+\begin{exercise}
+\textbf{if constexpr migration.} Take the following three-overload SFINAE function and rewrite it as a single function using \code{if constexpr}:
+\begin{lstlisting}[style=cpp]
+template<typename T>
+std::enable_if_t<std::is_integral_v<T>, T>
+safe_double(T x) { return x * 2; }
+
+template<typename T>
+std::enable_if_t<std::is_floating_point_v<T>, T>
+safe_double(T x) { return x * 2.0; }
+
+template<typename T>
+std::enable_if_t<!std::is_arithmetic_v<T>, std::string>
+safe_double(T x) { return "cannot double"; }
+\end{lstlisting}
+Verify that the behavior is identical by testing with \code{int}, \code{double}, and \code{std::string}.
+\end{exercise}
+
+\begin{exercise}
+\textbf{Detection idiom.} Using the detection idiom developed in Section~\ref{sec:detection-idiom}, implement a generic \code{equals} function that:
+\begin{itemize}
+    \item Uses \code{operator==} if both types support it
+    \item Falls back to \code{std::memcmp} for trivially-comparable types if no \code{operator==} exists
+    \item Emits a compile-time error otherwise
+\end{itemize}
+\end{exercise}
+
+\begin{exercise}
+\textbf{Type theory connection.} Consider the type trait \code{std::is\_convertible<A, B>}.
+\begin{enumerate}
+    \item Express this as a predicate in the Curry-Howard framework. What proposition does it correspond to?
+    \item If \code{is\_convertible<A, B>} is true, what does that say about the type-theoretic relationship between \code{A} and \code{B}?
+    \item Write a function \code{safe\_cast<To>(From val)} that static-asserts \code{is\_convertible<From, To>} and performs the cast. How does this enforce the implication at compile time?
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+\textbf{Compile-time dispatch system.} Build a small \emph{type-indexed dispatch table} using only type traits and SFINAE (no virtual functions, no \code{std::any}):
+
+The goal: a function \code{process<T>(T val)} that calls:
+\begin{itemize}
+    \item \code{process\_int(int)} for signed integer types
+    \item \code{process\_uint(unsigned\_type)} for unsigned integer types
+    \item \code{process\_fp(float\_type)} for floating-point types
+    \item \code{process\_other(T)} for everything else
+\end{itemize}
+
+Ensure the dispatch is total: every type goes to exactly one handler. Use \code{static\_assert} to verify correctness. What happens if you call it with a type that is both integral and unsigned (like \code{unsigned int})? How do you resolve the priority?
+\end{exercise}
+
+\begin{takeaway}[Chapter 13: Key Takeaways]
+\begin{itemize}
+    \item \textbf{Before concepts, templates were unconstrained.} Passing a wrong type to a template gave errors deep inside the implementation. There was no way to communicate requirements at the function signature level.
+
+    \item \textbf{SFINAE: Substitution Failure Is Not An Error.} When the compiler tries to instantiate a template and the substitution produces invalid types in the function declaration, it silently discards that overload and moves on. This failure-without-error is the foundation of constrained polymorphism in pre-C++20 C++.
+
+    \item \textbf{std::enable\_if is the SFINAE workhorse.} \code{enable\_if<B, T>::type} exists only when \code{B} is true. When false, accessing \code{::type} causes substitution failure, removing the overload. The three usage patterns are: return type, template parameter, and function parameter SFINAE.
+
+    \item \textbf{Type traits are compile-time predicates on types.} The \code{<type\_traits>} header provides a comprehensive library: classification (\code{is\_integral}), properties (\code{is\_copy\_constructible}), relationships (\code{is\_same}, \code{is\_base\_of}), and transformations (\code{remove\_const}, \code{decay}).
+
+    \item \textbf{Custom type traits use template specialization as pattern matching.} The primary template handles the default case; partial specializations match specific type shapes (like \code{T*} for pointers). This is type-level programming.
+
+    \item \textbf{Tag dispatch uses empty structs as compile-time tokens.} The public interface extracts a tag type from a type trait and dispatches to overloaded implementations by passing a tag instance. The standard library's iterator categories are the canonical example.
+
+    \item \textbf{decltype gives the type of an expression; declval creates fictitious values.} Together they enable expression SFINAE: checking whether an arbitrary expression involving a type is valid, without constructing the type or evaluating the expression.
+
+    \item \textbf{The detection idiom generalizes expression SFINAE.} \code{is\_detected<Op, T>} checks whether the alias template \code{Op<T>} is valid, cleanly separating the definition of a type property from its use.
+
+    \item \textbf{if constexpr (C++17) replaces many SFINAE patterns.} Unlike regular \code{if}, discarded branches are not compiled. This enables a single function with multiple type-dependent code paths, replacing multiple \code{enable\_if} overloads with clear, linear code.
+
+    \item \textbf{Concepts (C++20) are the clean successor.} They express constraints at the function signature, produce errors at the call site, support composition and subsumption, and are far more readable. But SFINAE remains important for legacy code and full understanding.
+
+    \item \textbf{All of this is type-level computation.} SFINAE, type traits, \code{constexpr}, and concepts together form a compile-time computing system. The compiler evaluates predicates on types, makes decisions, and generates different code accordingly. This is a restricted but real form of dependent typing: computed values control what code is generated.
+\end{itemize}
+\end{takeaway}

@@ -1,0 +1,1534 @@
+﻿% =============================================================
+%  Chapter 7: Subtyping, Variance, and Inheritance
+%  "Type Theory from the Ground Up"
+% =============================================================
+
+\chapter{Subtyping, Variance, and Inheritance}
+\label{ch:subtyping}
+
+So far we have met two of the great tools that type systems use to make code
+reusable: \emph{parametric polymorphism} (the template/generics idea from
+Chapter~5) and \emph{type inference} (letting the compiler deduce types so you
+do not have to spell every one out, Chapter~6).  Today we meet the third big
+idea, and in some ways the most philosophically interesting one:
+\textbf{subtyping}.
+
+Subtyping is what you already know, vaguely, from object-oriented programming.
+You write a class \typename{Dog} that inherits from \typename{Animal}, and then
+the compiler lets you pass a \typename{Dog} wherever an \typename{Animal} is
+expected.  Most programmers accept this as an obvious feature and never think
+too hard about it.  But when you look at it carefully---really carefully---it
+is surprisingly subtle.  Why does inheritance give you subtyping?  Why can you
+not just drop a \code{vector<Dog>} where a \code{vector<Animal>} is expected?
+What does the word ``covariant'' actually mean, and why do function parameters
+behave \emph{backwards}?
+
+This chapter answers all of those questions from first principles.  We will
+build up the theory of subtyping step by step, use C++ as a running example,
+and explain variance---probably the single most misunderstood concept in
+practical type theory---until it feels completely natural.
+
+\section{The Core Idea: Using One Type Where Another Is Expected}
+\label{sec:subtyping-core}
+
+Let us start with everyday life.  Suppose you are at a coffee shop and the
+menu says ``today's special comes with a hot beverage.''  You order it.  The
+server brings you a coffee.  Is that okay?  Of course---a coffee \emph{is} a
+hot beverage.  Now suppose the menu said ``comes with a coffee.''  Could the
+server bring you a cup of plain hot water?  No, because hot water is not a
+coffee, even though every coffee is a hot beverage.
+
+This asymmetric relationship---``every A is a B, but not every B is an A''---is
+exactly what subtyping captures in a type system.
+
+\begin{definition}[Subtype]
+\label{def:subtype}
+A type $S$ is a \emph{subtype} of a type $T$, written $S <: T$, if every value
+of type $S$ is also a value of type $T$.  We say $T$ is a \emph{supertype} of
+$S$.
+\end{definition}
+
+\begin{intuition}
+Think of types as sets of values.  $S <: T$ means the set of values described
+by $S$ is a \emph{subset} of the set of values described by $T$.  Every Dog is
+an Animal, so $\{\text{all dogs}\} \subseteq \{\text{all animals}\}$, so
+$\typename{Dog} <: \typename{Animal}$.
+\end{intuition}
+
+The moment you have a subtype relation, one key consequence follows
+automatically.
+
+\begin{keyinsight}[The Substitution Principle]
+If $S <: T$, then any expression of type $S$ may be used in any context that
+expects a value of type $T$.  Formally: whenever $\Gamma \vdash e : S$ and
+$S <: T$, we can conclude $\Gamma \vdash e : T$.
+
+This rule is called the \emph{subsumption rule} in type theory texts.  In
+practical terms: a subtype can always stand in for its supertype.
+\end{keyinsight}
+
+The subsumption rule is sometimes written as an inference rule:
+\[
+  \frac{\Gamma \vdash e : S \quad S <: T}{\Gamma \vdash e : T}
+  \quad (\text{T-Sub})
+\]
+
+You may have heard of the \textbf{Liskov Substitution Principle} (LSP), named
+after Barbara Liskov who formalized it in 1987.  In its informal phrasing: ``if
+$S$ is a subtype of $T$, then objects of type $T$ in a program may be replaced
+with objects of type $S$ without altering any of the desirable properties of
+the program.''  That is exactly the substitution principle above, stated with
+the extra requirement that substitution should not \emph{break anything}.
+
+The LSP turns out to be stronger than what a type system alone can enforce---it
+is a semantic condition about program behavior, not just a syntactic one.  A
+type system can guarantee that a substitution is \emph{type-safe}, but not that
+it preserves all invariants.  We will come back to this distinction.
+
+\section{Subtyping as a Mathematical Relation}
+\label{sec:subtyping-relation}
+
+The $<:$ symbol denotes a \emph{binary relation} on types.  What properties
+does it have?
+
+\begin{definition}[Subtyping Rules]
+The subtyping relation $<:$ satisfies at minimum:
+\begin{enumerate}
+  \item \textbf{Reflexivity:} $T <: T$ for every type $T$.
+        Every type is a subtype of itself.
+  \item \textbf{Transitivity:} If $A <: B$ and $B <: C$, then $A <: C$.
+        The ``is-a'' relationship chains.
+\end{enumerate}
+A relation that is reflexive and transitive is called a \emph{preorder}.  So
+the set of types, equipped with $<:$, forms a preorder.
+\end{definition}
+
+Why reflexivity?  Because a \typename{Dog} can certainly stand in for a
+\typename{Dog}---that is trivially true and we need it to hold for the type
+system to be consistent.
+
+Why transitivity?  Because if \typename{GoldenRetriever} $<:$
+\typename{Dog} and \typename{Dog} $<:$ \typename{Animal}, then a
+\typename{GoldenRetriever} can stand in for a \typename{Dog}, which can stand
+in for an \typename{Animal}, so a \typename{GoldenRetriever} can stand in for
+an \typename{Animal} directly.  This must be $<:$ transitive, or the rule would
+be extremely fragile.
+
+\subsection{Subtype Lattices}
+
+We can draw the subtype relation as a directed graph, with an arrow from $S$ to
+$T$ whenever $S <: T$ (and $S \neq T$).  This is called a \emph{subtype
+lattice} (though technically it may only be a partial order or preorder, not
+always a full lattice).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=1.6cm and 2.2cm,
+  every node/.style={draw, rounded corners, minimum width=2.4cm,
+                     minimum height=0.7cm, align=center, font=\small\ttfamily},
+  arrow/.style={-{Stealth[length=6pt]}, thick, blue!60!black}
+]
+  % Top
+  \node (animal)  {Animal};
+  % Second level
+  \node (dog)   [below left=of animal]  {Dog};
+  \node (cat)   [below right=of animal] {Cat};
+  % Third level
+  \node (gr)    [below=of dog]          {GoldenRetriever};
+  \node (poodle)[below right=of dog, xshift=-0.5cm]    {Poodle};
+
+  \draw[arrow] (dog)    -- (animal);
+  \draw[arrow] (cat)    -- (animal);
+  \draw[arrow] (gr)     -- (dog);
+  \draw[arrow] (poodle) -- (dog);
+\end{tikzpicture}
+\caption{A small subtype lattice.  Arrows point from subtype to supertype.
+         GoldenRetriever $<:$ Dog $<:$ Animal by transitivity.}
+\label{fig:subtype-lattice}
+\end{figure}
+
+In a language with a universal root class (like Java's \typename{Object} or
+C\#'s \typename{object}), every user-defined type eventually chains up to that
+root.  The lattice has a single top element.  We will see shortly that type
+theory gives that top element a name: $\top$ (``top'').
+
+\section{Structural vs.\ Nominal Subtyping}
+\label{sec:structural-nominal}
+
+There are two fundamentally different answers to the question ``when is $S$
+a subtype of $T$?''
+
+\begin{definition}[Nominal Subtyping]
+A type system uses \emph{nominal subtyping} (also called \emph{name-based
+subtyping}) when $S <: T$ only if the programmer has \emph{explicitly declared}
+that $S$ is a subtype of $T$---by writing an inheritance clause, an
+\code{implements} declaration, or similar.  The names of the types, and their
+explicit declarations, determine the subtype relation.
+\end{definition}
+
+\begin{definition}[Structural Subtyping]
+A type system uses \emph{structural subtyping} (also called \emph{duck typing}
+when used dynamically) when $S <: T$ if $S$ has \emph{at least all the
+structure} that $T$ requires---the same fields, the same methods, compatible
+types---regardless of whether the programmer wrote an explicit declaration.
+\end{definition}
+
+\begin{example}[Structural vs.\ Nominal in Practice]
+Suppose we have two record types:
+\begin{lstlisting}[style=pseudocode]
+type Point2D = { x: int, y: int }
+type Named   = { name: string }
+type NamedPoint = { x: int, y: int, name: string }
+\end{lstlisting}
+
+Under \textbf{structural subtyping}: \code{NamedPoint $<:$ Point2D} holds
+automatically, because \code{NamedPoint} has all the fields of \code{Point2D}
+(and more).  No declaration needed.
+
+Under \textbf{nominal subtyping}: \code{NamedPoint $<:$ Point2D} holds only
+if the programmer wrote something like \code{class NamedPoint extends Point2D}.
+Without that declaration, the types are unrelated no matter how similar their
+structure.
+\end{example}
+
+\begin{cppconnection}[Nominal Subtyping in C++]
+C++ uses \textbf{nominal subtyping} for classes.  The subtype relation between
+class types is determined entirely by the inheritance hierarchy you declare:
+
+\begin{lstlisting}[style=cpp]
+class Animal {
+public:
+    virtual std::string sound() const = 0;
+    virtual ~Animal() = default;
+};
+
+class Dog : public Animal {   // Dog <: Animal is declared here
+public:
+    std::string sound() const override { return "Woof"; }
+};
+
+class Cat : public Animal {   // Cat <: Animal is declared here
+public:
+    std::string sound() const override { return "Meow"; }
+};
+
+// This compiles: Dog* is used where Animal* expected
+void makeNoise(Animal* a) { std::cout << a->sound() << '\n'; }
+
+int main() {
+    Dog d;
+    makeNoise(&d);   // Dog* <: Animal*, substitution principle in action
+}
+\end{lstlisting}
+
+A class that happens to have the same methods as \typename{Animal} but does not
+inherit from it is \emph{not} a subtype of \typename{Animal} in C++.
+\end{cppconnection}
+
+\begin{cppconnection}[Go Uses Structural Subtyping for Interfaces]
+Go takes the opposite approach.  A type satisfies an interface automatically if
+it has the right methods---no explicit declaration is required:
+
+\begin{lstlisting}[style=pseudocode]
+// Go
+type Animal interface {
+    Sound() string
+}
+
+type Dog struct{}
+func (d Dog) Sound() string { return "Woof" }
+
+// Dog implicitly implements Animal -- no "implements" keyword needed
+// Dog <: Animal structurally, because Dog has a Sound() method.
+\end{lstlisting}
+
+This is structural subtyping.  Rust's trait system is similar in spirit.
+TypeScript also uses structural subtyping for its object types.
+\end{cppconnection}
+
+Neither approach is strictly better.  Nominal subtyping catches accidental
+structural matches (two types that look the same but mean different things),
+while structural subtyping allows more flexible code reuse without requiring
+inheritance hierarchies that may not reflect the real domain.
+
+\section{Width and Depth Subtyping for Record Types}
+\label{sec:width-depth}
+
+When we talk about subtyping for record types (structs, objects with fields),
+two important rules come into play: \emph{width subtyping} and \emph{depth
+subtyping}.
+
+\subsection{Width Subtyping: More Fields Makes a Subtype}
+
+\begin{keyinsight}[Width Subtyping]
+A record type with \emph{more} fields is a subtype of a record type with
+\emph{fewer} fields, provided all the fields of the supertype are present with
+compatible types.
+
+\[
+  \{ \ell_1 : T_1,\; \ell_2 : T_2,\; \ell_3 : T_3 \}
+  \;<:\;
+  \{ \ell_1 : T_1,\; \ell_2 : T_2 \}
+\]
+
+Adding more fields never breaks anything: if your code only uses \code{x} and
+\code{y}, giving it an object that also has \code{z} does not break anything.
+The extra field is simply ignored.
+\end{keyinsight}
+
+\begin{example}[Width Subtyping]
+\begin{lstlisting}[style=pseudocode]
+type Point2D = { x: Float, y: Float }
+type Point3D = { x: Float, y: Float, z: Float }
+
+-- Point3D <: Point2D   (width subtyping: more fields)
+
+drawAt2D : Point2D -> Canvas -> Canvas
+drawAt2D p canvas = ...   -- uses only p.x and p.y
+
+myPoint : Point3D
+myPoint = { x = 1.0, y = 2.0, z = 3.0 }
+
+-- Under structural subtyping this is fine:
+result = drawAt2D myPoint canvas  -- myPoint has x and y, so it works
+\end{lstlisting}
+
+The intuition: if you need a 2D point and someone gives you a 3D point, no
+problem---you just ignore the $z$ coordinate.  The 3D point \emph{can do
+everything} a 2D point can do.
+\end{example}
+
+Width subtyping is why adding more fields to a struct/class gives you a more
+specific type.  In the subtype lattice, ``bigger'' structs sit \emph{lower}
+(more specific), ``smaller'' structs sit \emph{higher} (more general).  This
+surprises some people at first: intuitively, ``more'' feels bigger, but in the
+subtype lattice the direction is reversed.
+
+\subsection{Depth Subtyping: More Specific Field Types}
+
+\begin{keyinsight}[Depth Subtyping]
+If a record type $S$ has a field $\ell$ of type $S'$, and a record type $T$ has
+the same field $\ell$ of type $T'$, and $S' <: T'$, then $S <: T$ at that
+field.
+
+\[
+  \frac{S' <: T'}
+  {\;\{ \ell : S' \} <: \{ \ell : T' \}\;}
+  \quad \text{(depth subtyping)}
+\]
+
+Making a field's type \emph{more specific} makes the whole record type more
+specific.
+\end{keyinsight}
+
+\begin{example}[Depth Subtyping]
+\begin{lstlisting}[style=pseudocode]
+type Animal = { name: String, sound: String }
+type Cat    = { name: String, sound: String, lives: Int }
+-- Cat <: Animal  (width subtyping)
+
+type PetOwner  = { pet: Animal }
+type CatOwner  = { pet: Cat   }
+
+-- Since Cat <: Animal, and the field name is the same:
+--   CatOwner <: PetOwner   (depth subtyping)
+
+greetPet : PetOwner -> String
+greetPet owner = "Hello, " ++ owner.pet.name
+
+myCat : CatOwner
+myCat = { pet = { name = "Whiskers", sound = "Meow", lives = 9 } }
+
+greeting = greetPet myCat    -- works because CatOwner <: PetOwner
+\end{lstlisting}
+\end{example}
+
+\begin{warning}[Depth Subtyping and Mutation Do Not Mix Well]
+Depth subtyping is safe for \emph{read-only} (immutable) fields.  If fields are
+mutable, depth subtyping can cause serious problems.
+
+Suppose \code{PetOwner}'s \code{pet} field is mutable and \code{CatOwner <:
+PetOwner}.  Then someone could assign an \code{Animal} (that is not a \code{Cat})
+into the \code{pet} field of what is really a \code{CatOwner}, corrupting its
+type invariant.  We will see the same problem again with arrays in
+Section~\ref{sec:java-array-problem}.  The lesson: depth subtyping requires
+immutability, or very careful tracking of read vs.\ write access.
+\end{warning}
+
+\section{Inheritance in C++ as Nominal Subtyping}
+\label{sec:cpp-inheritance}
+
+In C++, public inheritance is the mechanism that creates the subtype relation.
+Writing \code{class Dog : public Animal} is an \emph{assertion} to the compiler:
+``Dog is a subtype of Animal.''  The compiler then lets you use \code{Dog*} or
+\code{Dog\&} wherever \code{Animal*} or \code{Animal\&} is expected.
+
+\begin{cppconnection}[What Inheritance Really Buys You]
+Public inheritance in C++ does three things at once:
+\begin{enumerate}
+  \item \textbf{Subtyping}: \code{Dog*} can be passed as \code{Animal*}.
+  \item \textbf{Interface inheritance}: \code{Dog} must implement all pure
+        virtual functions of \code{Animal}.
+  \item \textbf{Implementation inheritance}: \code{Dog} inherits any concrete
+        methods already defined in \code{Animal} (code reuse).
+\end{enumerate}
+Type theory is primarily interested in (1) and (2).  Item (3) is a language
+convenience that is not strictly necessary for subtyping---you could have
+subtyping without inheriting implementations (Go's interface system does exactly
+that).
+\end{cppconnection}
+
+\subsection{Virtual Functions and Dynamic Dispatch}
+
+Subtyping in C++ is made useful by \emph{dynamic dispatch}: when you call a
+virtual function through a pointer or reference to the base class, C++ looks up
+which concrete type the object actually is at runtime and calls the right
+implementation.
+
+\begin{lstlisting}[style=cpp]
+#include <iostream>
+#include <vector>
+#include <memory>
+
+class Shape {
+public:
+    virtual double area() const = 0;    // pure virtual: must override
+    virtual void   draw() const = 0;
+    virtual ~Shape() = default;
+};
+
+class Circle : public Shape {
+    double radius_;
+public:
+    explicit Circle(double r) : radius_(r) {}
+    double area() const override { return 3.14159 * radius_ * radius_; }
+    void   draw() const override { std::cout << "Drawing circle\n"; }
+};
+
+class Rectangle : public Shape {
+    double w_, h_;
+public:
+    Rectangle(double w, double h) : w_(w), h_(h) {}
+    double area() const override { return w_ * h_; }
+    void   draw() const override { std::cout << "Drawing rectangle\n"; }
+};
+
+void printArea(const Shape& s) {    // expects a Shape&
+    std::cout << "Area: " << s.area() << '\n';
+}
+
+int main() {
+    Circle    c(5.0);
+    Rectangle r(4.0, 6.0);
+
+    // Substitution principle: Circle& <: Shape&, Rectangle& <: Shape&
+    printArea(c);    // calls Circle::area()
+    printArea(r);    // calls Rectangle::area()
+
+    // Heterogeneous collection via the common supertype
+    std::vector<std::unique_ptr<Shape>> shapes;
+    shapes.push_back(std::make_unique<Circle>(3.0));
+    shapes.push_back(std::make_unique<Rectangle>(2.0, 5.0));
+
+    for (const auto& shape : shapes) {
+        shape->draw();    // dynamic dispatch: correct version called
+    }
+}
+\end{lstlisting}
+
+From a type-theory perspective, the \code{vector<unique\_ptr<Shape>>} is a
+heterogeneous collection made possible by subtyping.  Every element has type
+\code{Shape*} (statically), but at runtime each element knows its true type and
+responds appropriately.  This is the essence of subtype polymorphism.
+
+\subsection{Vtables: The Runtime Machinery}
+
+How does C++ implement dynamic dispatch?  Every class with virtual functions
+gets a \emph{virtual table} (vtable): a table of function pointers, one per
+virtual function.  Every object of that class contains a hidden pointer to the
+vtable.  When you call a virtual function, the compiler emits code that:
+
+\begin{enumerate}
+  \item Loads the vtable pointer from the object.
+  \item Looks up the function pointer at the appropriate offset.
+  \item Calls through that pointer.
+\end{enumerate}
+
+This costs one extra indirection compared to a non-virtual call.  It is fast in
+practice---the vtable pointer is usually in cache---but it is nonzero overhead,
+which is why C++ makes virtual dispatch opt-in.
+
+From a type-theory perspective, a vtable is one implementation of a
+\emph{dictionary-passing} style: the runtime information about which concrete
+type you have is bundled into the object, and each virtual call looks up the
+correct behavior in that dictionary.  Haskell's typeclass dictionaries work very
+similarly, though they are passed explicitly rather than embedded in objects.
+
+\subsection{Multiple Inheritance and the Diamond Problem}
+
+C++ allows a class to inherit from multiple base classes:
+
+\begin{lstlisting}[style=cpp]
+class Flyable { public: virtual void fly() = 0; };
+class Swimmable { public: virtual void swim() = 0; };
+
+class Duck : public Flyable, public Swimmable {
+public:
+    void fly()  override { std::cout << "Duck flies\n"; }
+    void swim() override { std::cout << "Duck swims\n"; }
+};
+\end{lstlisting}
+
+Here \typename{Duck} $<:$ \typename{Flyable} and \typename{Duck} $<:$
+\typename{Swimmable}.  The subtype lattice now has multiple paths upward.
+
+The \textbf{diamond problem} arises when two base classes share a common
+ancestor:
+
+\begin{lstlisting}[style=cpp]
+class Animal    { public: virtual std::string name() = 0; };
+class Flyable   : public Animal { /* ... */ };
+class Swimmable : public Animal { /* ... */ };
+class Duck      : public Flyable, public Swimmable {
+    // Duck now has TWO copies of Animal's data!
+    // Calling duck.name() is ambiguous.
+};
+\end{lstlisting}
+
+C++ solves this with \emph{virtual inheritance}:
+
+\begin{lstlisting}[style=cpp]
+class Flyable   : public virtual Animal { /* ... */ };
+class Swimmable : public virtual Animal { /* ... */ };
+class Duck      : public Flyable, public Swimmable {
+    // Now there is exactly one copy of Animal's data.
+    std::string name() override { return "Duck"; }
+};
+\end{lstlisting}
+
+Type-theoretically, the diamond problem is a coherence issue: if the subtype
+lattice has a diamond shape, we need a guarantee that the two paths from
+\typename{Duck} to \typename{Animal} agree on what \typename{Animal} means.
+Virtual inheritance enforces this by sharing the base class subobject.  Many
+newer languages (Rust, Go, Swift) simply disallow inheriting implementation from
+multiple sources to avoid this complexity.
+
+\section{Variance: The Relationship Between $F\langle A \rangle$ and $F\langle B \rangle$}
+\label{sec:variance}
+
+We come now to the concept that trips up even experienced programmers:
+\emph{variance}.  Understanding variance is essential for understanding why
+\code{vector<Dog>} is not a \code{vector<Animal>}, why function parameters
+behave ``backwards,'' and why the type systems of languages like Kotlin, Scala,
+and TypeScript are designed the way they are.
+
+\begin{definition}[Type Constructor]
+A \emph{type constructor} $F$ is a mapping from types to types.  Given a type
+$A$, $F(A)$ (or $F\langle A \rangle$ in C++ notation) is another type.
+Examples: $\code{vector}\langle A \rangle$, $A \to B$ (for fixed $B$),
+$\code{unique\_ptr}\langle A \rangle$.
+\end{definition}
+
+The question variance asks is: \textbf{if $A <: B$, what (if anything) is the
+relationship between $F\langle A \rangle$ and $F\langle B \rangle$?}
+
+There are three possible answers.
+
+\begin{keyinsight}[The Three Variance Positions]
+\begin{enumerate}
+  \item \textbf{Covariant}: $A <: B$ implies $F\langle A \rangle <: F\langle B \rangle$.
+        The subtype relationship goes in the \emph{same} direction.
+  \item \textbf{Contravariant}: $A <: B$ implies $F\langle B \rangle <: F\langle A \rangle$.
+        The subtype relationship \emph{reverses}.
+  \item \textbf{Invariant}: Neither $F\langle A \rangle <: F\langle B \rangle$
+        nor $F\langle B \rangle <: F\langle A \rangle$ in general.
+        No subtype relationship is forced.
+\end{enumerate}
+A type constructor can be covariant in some of its arguments and
+contravariant (or invariant) in others.
+\end{keyinsight}
+
+Let us build up intuition for each case before giving the formal rules.
+
+\subsection{Covariance: Same Direction}
+
+Covariance is the ``natural'' one that matches everyone's first intuition.  If
+you can read values out of a container but never write into it, then a container
+of dogs \emph{is} a container of animals.
+
+\begin{example}[Covariant: Read-Only Container]
+Imagine a type \code{ReadOnly<A>} that lets you call \code{get() -> A} but
+has no \code{set()} method.
+
+If I give you a \code{ReadOnly<Dog>} and you only call \code{get()}, you get a
+\code{Dog} back.  Since \typename{Dog} $<:$ \typename{Animal}, that \code{Dog}
+is also an \code{Animal}.  So using a \code{ReadOnly<Dog>} wherever a
+\code{ReadOnly<Animal>} is expected is perfectly safe.
+
+Therefore: \code{ReadOnly<Dog>} $<:$ \code{ReadOnly<Animal>}.  The type
+constructor \code{ReadOnly} is \textbf{covariant} in its type parameter.
+\end{example}
+
+Other examples of covariant positions:
+\begin{itemize}
+  \item The \emph{return type} of a function: a function returning a
+        \code{Dog} satisfies any context expecting a function returning an
+        \code{Animal}, because a \code{Dog} is an \code{Animal}.
+  \item \code{IEnumerable<T>} in C\# (read-only iteration) is covariant
+        (declared \code{IEnumerable<out T>}).
+  \item \code{Iterable<T>} in Kotlin (declared \code{out T}).
+\end{itemize}
+
+\subsection{Contravariance: The Reversed Direction}
+
+Contravariance is the one that surprises people.  Let us motivate it carefully.
+
+\begin{example}[Contravariant: Write-Only Container]
+Imagine a type \code{WriteOnly<A>} that lets you call \code{put(a: A)} but
+has no \code{get()}.
+
+If I give you a \code{WriteOnly<Animal>} and you need a \code{WriteOnly<Dog>},
+can you use it?  You need to be able to call \code{put(d)} where \code{d} is a
+\code{Dog}.  A \code{WriteOnly<Animal>} accepts any \code{Animal}, so it
+certainly accepts a \code{Dog} (since \typename{Dog} $<:$ \typename{Animal}).
+So yes, a \code{WriteOnly<Animal>} can serve where a \code{WriteOnly<Dog>} is
+needed!
+
+Therefore: \code{WriteOnly<Animal>} $<:$ \code{WriteOnly<Dog>}---the
+subtype relation is \emph{reversed} compared to \code{Dog $<:$ Animal}.
+The type constructor \code{WriteOnly} is \textbf{contravariant} in its
+type parameter.
+\end{example}
+
+The key contravariant case in practice is function parameters.  We will
+dedicate an entire section to this.
+
+\subsection{Invariance: No Relationship}
+
+\begin{example}[Invariant: Mutable Container]
+Imagine a type \code{Box<A>} with both \code{get() -> A} and
+\code{put(a: A)}.
+
+Could \code{Box<Dog>} serve as \code{Box<Animal>}?  Suppose yes.
+Then someone could call \code{put(cat)} on it (since \code{Cat <: Animal}),
+and now the box---which really holds a \code{Dog}---has had a \code{Cat}
+written into it.  Type safety violated.
+
+Could \code{Box<Animal>} serve as \code{Box<Dog>}?  Suppose yes.  Then
+someone calls \code{get()} expecting a \code{Dog} back, but the box might
+contain a \code{Cat}.  Type safety violated again.
+
+Therefore: neither \code{Box<Dog>} $<:$ \code{Box<Animal>} nor the reverse.
+\code{Box} is \textbf{invariant}.  This is the safe default for mutable
+containers.
+\end{example}
+
+\begin{cppconnection}[C++ Templates Are Invariant]
+In C++, \code{std::vector<Dog>} is \textbf{not} a subtype of
+\code{std::vector<Animal>}.  The compiler will reject any attempt to use one
+where the other is expected:
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+
+class Animal { public: virtual ~Animal() = default; };
+class Dog : public Animal {};
+class Cat : public Animal {};
+
+void feed(std::vector<Animal>& animals) {
+    animals.push_back(Cat{});   // Adds a Cat -- perfectly valid for vector<Animal>
+}
+
+int main() {
+    std::vector<Dog> dogs = { Dog{}, Dog{} };
+
+    // COMPILE ERROR: vector<Dog> is not vector<Animal>
+    // feed(dogs);
+
+    // Why is this good? Because feed() would add a Cat to what is
+    // really a vector<Dog>, corrupting the runtime type invariant.
+}
+\end{lstlisting}
+
+This is not a limitation of C++; it is a \emph{deliberate safety choice}.
+Templates are invariant because the type parameter appears in both input and
+output positions (both \code{push\_back} and \code{operator[]}).
+\end{cppconnection}
+
+\section{Function Subtyping: The Central Rule}
+\label{sec:function-subtyping}
+
+The most important variance rule in type theory---and the one that confuses
+everyone at first---is the rule for function types.
+
+\begin{keyinsight}[Function Subtyping Rule]
+Given function types $(A_1 \to B_1)$ and $(A_2 \to B_2)$:
+\[
+  (A_1 \to B_1) \;<:\; (A_2 \to B_2)
+  \quad\text{if and only if}\quad
+  A_2 \;<:\; A_1
+  \;\text{ and }\;
+  B_1 \;<:\; B_2
+\]
+
+In words: a function type is contravariant in its \textbf{input} (the parameter
+type goes in the \emph{reverse} direction) and covariant in its \textbf{output}
+(the return type goes in the \emph{same} direction).
+\end{keyinsight}
+
+Let us unpack each half of this rule.
+
+\subsection{Why the Return Type Is Covariant}
+
+Suppose you need a function of type $\text{Animal} \to \Bool$.  You call it with
+some animal and expect a boolean back.
+
+Now suppose someone gives you a function of type $\text{Animal} \to \text{Dog}$.
+Can you use it?  You would call it, get a \code{Dog} back---but a \code{Dog} is
+an \code{Animal}, which is definitely a \code{Dog}---wait, you expected a $\Bool$.
+That does not work.
+
+Let us try a different direction: suppose you need a function of type
+$\text{Animal} \to \text{Animal}$.  Someone gives you $\text{Animal} \to
+\text{Dog}$.  Can you use it?  You call it, get a \code{Dog} back.  Since
+\typename{Dog} $<:$ \typename{Animal}, that \code{Dog} is an \code{Animal}.
+Yes, this works!
+
+So $(\text{Animal} \to \text{Dog}) <: (\text{Animal} \to \text{Animal})$.
+The return type is \textbf{covariant}: a function returning something more
+specific can stand in for a function returning something more general.  The
+direction is the same as the return type relationship:
+$\text{Dog} <: \text{Animal}$ implies $(\_ \to \text{Dog}) <: (\_ \to
+\text{Animal})$.
+
+\subsection{Why the Parameter Type Is Contravariant}
+
+This is the surprising half.  Suppose you need a function of type
+$\text{Dog} \to \Bool$---a function that takes a \code{Dog} and returns a
+\code{Bool} (maybe it checks whether the dog is well-trained).
+
+Someone offers you a function $f$ of type $\text{Animal} \to \Bool$---one that
+works for any animal.  Can you use $f$ where you need $(\text{Dog} \to \Bool)$?
+
+Think about it from the caller's perspective.  You will call this function with
+a \code{Dog}.  If $f$ accepts any \code{Animal}---and a \code{Dog} is an
+\code{Animal}---then $f$ will certainly accept your \code{Dog}.  It will give
+you a \code{Bool} back.  Everything works.
+
+So $(\text{Animal} \to \Bool) <: (\text{Dog} \to \Bool)$.  The parameter type
+went in the \emph{reverse} direction: $\text{Dog} <: \text{Animal}$ but
+$(\text{Animal} \to \_) <: (\text{Dog} \to \_)$.
+
+\begin{intuition}[Why Parameters Are Contravariant]
+A function's parameter type describes what \textbf{inputs it can accept}.  A
+function that accepts any \text{Animal} is \emph{more capable} than one that
+only accepts \text{Dog}---it is a stronger function.  But ``more capable'' in
+the direction of what callers can give it corresponds to \emph{less demanding},
+which means it is a more general function, meaning it can serve as a
+\emph{subtype} in function-type terms.
+
+More general input handling $\Rightarrow$ can stand in for more functions
+$\Rightarrow$ lower in the function-type subtype hierarchy.
+
+The general principle: \textbf{contravariance appears wherever types appear as
+inputs or \emph{negative} positions}; \textbf{covariance appears wherever types
+appear as outputs or \emph{positive} positions}.
+\end{intuition}
+
+\begin{example}[Putting the Function Subtyping Rule Together]
+Let \typename{Animal} and \typename{Dog} satisfy $\text{Dog} <: \text{Animal}$,
+and $\text{Bool} <: \text{Bool}$ (reflexivity).
+
+\[
+  (\text{Animal} \to \text{Bool}) <: (\text{Dog} \to \text{Bool})
+\]
+
+Check: $A_2 = \text{Dog} <: \text{Animal} = A_1$? Yes. $B_1 = \text{Bool} <:
+\text{Bool} = B_2$? Yes (reflexivity). Rule satisfied. \\[0.6em]
+
+Now: is $(\text{Dog} \to \text{Dog}) <: (\text{Animal} \to \text{Animal})$?
+
+Check: $A_2 = \text{Animal} <: \text{Dog} = A_1$?  Only if \typename{Animal}
+$<:$ \typename{Dog}, which is false (not every animal is a dog).  \textbf{No.}
+
+But: is $(\text{Animal} \to \text{Dog}) <: (\text{Animal} \to \text{Animal})$?
+
+Check: $A_2 = \text{Animal} <: \text{Animal} = A_1$? Yes (reflexivity).
+$B_1 = \text{Dog} <: \text{Animal} = B_2$? Yes.  \textbf{Yes!}
+\end{example}
+
+\begin{cppconnection}[Covariant Return Types in C++]
+C++ supports \textbf{covariant return types} for virtual functions: an
+overriding function may return a type that is a subtype of the base class's
+return type.
+
+\begin{lstlisting}[style=cpp]
+class Animal {
+public:
+    virtual Animal* clone() const = 0;
+    virtual ~Animal() = default;
+};
+
+class Dog : public Animal {
+public:
+    // Return type Dog* is more specific than Animal*.
+    // Dog* <: Animal*, so this is covariant and allowed.
+    Dog* clone() const override {
+        return new Dog(*this);
+    }
+};
+
+int main() {
+    Dog d;
+    Dog*    d2 = d.clone();       // No cast needed: clone() returns Dog*
+    Animal* a2 = d.clone();       // Also fine via subsumption
+    delete d2;
+    delete a2;
+}
+\end{lstlisting}
+
+This is a direct application of the covariant return type rule from function
+subtyping theory.  The function \code{Dog::clone} is a subtype of
+\code{Animal::clone} because the return type got more specific (same direction
+as Dog $<:$ Animal).
+
+Note: C++ does \emph{not} support contravariant parameter types in overrides.
+If you try to change a parameter type in an override, you do not get an override
+at all---you get a new overloaded function.  This is a known limitation.  Some
+languages (Eiffel tried to allow covariant parameters, which is actually unsound
+and led to the ``Eiffel problem.'')
+\end{cppconnection}
+
+\subsection{Function Variance for Multi-Argument Functions}
+
+For functions of multiple arguments, the rule extends straightforwardly:
+
+\[
+  (A_1 \times A_2 \to B) <: (A_1' \times A_2' \to B')
+  \quad\Leftrightarrow\quad
+  A_1' <: A_1 \;\text{ and }\; A_2' <: A_2 \;\text{ and }\; B <: B'
+\]
+
+Every parameter is contravariant, the return is covariant.  You can remember
+this with the mnemonic: \textbf{PINTO}---Parameters are contravariant IN, the
+ouTput is cOvariant.
+
+\section{Variance in C++ Templates and the \texttt{const} Qualifier}
+\label{sec:cpp-variance}
+
+We already saw that C++ templates are invariant.  But C++ has a form of
+covariance available through the \code{const} qualifier.
+
+\begin{cppconnection}[const as a Variance Annotation]
+In C++, \code{T const*} (pointer to const T) can be thought of as a
+``read-only view'' of a \code{T}.  Adding \code{const} is always safe:
+\code{T*} converts implicitly to \code{T const*}.  In other words:
+
+\[
+  T^* <: (T\;\code{const})^*
+\]
+
+But not vice versa---you cannot strip \code{const} implicitly.
+
+This gives us a limited form of depth subtyping: a function taking
+\code{Animal const\&} is more permissive than one taking \code{Dog const\&}
+(contravariance in parameters), and returning a \code{Dog const*} is more
+specific than returning \code{Animal const*} (covariance in return).
+
+The pattern of using \code{const} to enable safe covariance in containers is
+widespread.  \code{std::span<const T>} can view a \code{std::vector<T>}
+without copying, for example.
+\end{cppconnection}
+
+\subsection{Workarounds for Invariant Templates}
+
+Since \code{vector<Dog>} is not a \code{vector<Animal>}, how do you write a
+function that works with a sequence of any kind of animal?  Several approaches:
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <concepts>
+#include <span>
+
+class Animal { public: virtual void speak() const = 0; virtual ~Animal() = default; };
+class Dog : public Animal { public: void speak() const override { /*...*/ } };
+
+// Approach 1: Template (parametric polymorphism) -- type-safe, inlined
+template<std::derived_from<Animal> T>
+void makeAllSpeak(const std::vector<T>& animals) {
+    for (const auto& a : animals) a.speak();
+}
+
+// Approach 2: span of pointers to base -- virtual dispatch, no copy
+void makeAllSpeakPtr(std::span<const Animal* const> animals) {
+    for (const auto* a : animals) a->speak();
+}
+
+// Approach 3: std::vector<Animal*> -- the classic OOP heterogeneous container
+void makeAllSpeakOOP(const std::vector<Animal*>& animals) {
+    for (const auto* a : animals) a->speak();
+}
+\end{lstlisting}
+
+Approach 1 uses parametric polymorphism and is resolved at compile time.
+Approaches 2 and 3 use subtype polymorphism and involve dynamic dispatch.  This
+choice---compile-time parametric vs.\ runtime subtype---is a recurring theme we
+explore in Section~\ref{sec:sub-vs-parametric}.
+
+\section{Top and Bottom Types}
+\label{sec:top-bottom}
+
+Every sensible subtype lattice has two extreme elements: a type that sits at
+the very top (a supertype of everything) and a type that sits at the very
+bottom (a subtype of everything).
+
+\begin{definition}[Top Type $\top$]
+The \emph{top type} $\top$ (sometimes called \texttt{Any}, \texttt{Object}, or
+\texttt{unknown}) is a type such that $T <: \top$ for every type $T$.  Every
+type is a subtype of $\top$.
+
+A value of type $\top$ carries essentially no information: all you know is that
+it is \emph{some} value.  You cannot safely call any methods on it or perform
+any operations, because you do not know its concrete type.
+\end{definition}
+
+\begin{definition}[Bottom Type $\bot$]
+The \emph{bottom type} $\bot$ (sometimes called \texttt{Nothing},
+\texttt{never}, \texttt{noreturn}, or $\Void$ in certain formalisms) is a type
+such that $\bot <: T$ for every type $T$.  The bottom type is a subtype of
+everything.
+
+The bottom type has \textbf{no values}.  It is the empty set in the
+set-theoretic interpretation.  A function that claims to return $\bot$ can never
+return normally---it must either loop forever, throw an exception, or abort the
+process.
+\end{definition}
+
+\begin{intuition}[Why $\bot$ Is a Subtype of Everything]
+If $\bot$ has no values, then ``every value of type $\bot$ is also a value of
+type \typename{String}'' is \emph{vacuously true}---there are no values of type
+$\bot$ to violate the condition.  This makes $\bot <: T$ hold for any $T$,
+which is exactly what we want for the bottom type.
+
+Think of it this way: a function that claims to return a \typename{String} but
+actually throws an exception is not lying---it never returns a non-string,
+because it never returns at all.
+\end{intuition}
+
+\begin{cppconnection}[Top and Bottom in C++]
+C++ does not have clean top and bottom types, but there are approximations:
+
+\textbf{Top-like types:}
+\begin{itemize}
+  \item \code{void*}: can point to any object type.  You lose all type
+        information---you cannot dereference it without a cast.  This is a
+        very blunt instrument; prefer \code{std::any} (type-erased value) or
+        templates.
+  \item \code{std::any} (C++17): a type-safe container for a value of any
+        copy-constructible type.  Closer in spirit to a true top type.
+\end{itemize}
+
+\textbf{Bottom-like types:}
+\begin{itemize}
+  \item The \code{[[noreturn]]} attribute on a function declaration tells the
+        compiler that the function never returns.  Logically, its return type
+        is $\bot$.  Examples: \code{std::abort()}, \code{std::terminate()},
+        \code{std::exit()}, and \code{throw} expressions.
+  \item In the type-theoretic sense, \code{[[noreturn]]} functions can be used
+        in any context regardless of the return type expected, because they
+        never actually produce a return value.
+\end{itemize}
+
+\begin{lstlisting}[style=cpp]
+#include <stdexcept>
+
+// This function has type () -> bot (in type theory notation)
+[[noreturn]] void crash(const std::string& msg) {
+    throw std::runtime_error(msg);
+}
+
+// It can appear in any branch, regardless of the surrounding expected type:
+int safeDivide(int a, int b) {
+    if (b == 0) crash("division by zero");  // OK: crash returns bot <: int
+    return a / b;
+}
+
+double safeRoot(double x) {
+    if (x < 0) crash("negative input");    // OK: crash returns bot <: double
+    return std::sqrt(x);
+}
+\end{lstlisting}
+
+Languages like Kotlin, TypeScript, Scala, and Rust have explicit bottom types
+(\code{Nothing}, \code{never}, \code{Nothing}, and \code{!} respectively).
+\end{cppconnection}
+
+\subsection{The Interval View of Types}
+
+With top and bottom types, every type $T$ satisfies $\bot <: T <: \top$.  The
+entire type system is ``bounded'' between these two extremes.  The subtype
+lattice looks like this for a simple hierarchy:
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=1.3cm and 2.0cm,
+  every node/.style={draw, rounded corners, minimum width=2.2cm,
+                     minimum height=0.65cm, align=center, font=\small},
+  arrow/.style={-{Stealth[length=6pt]}, thick, blue!60!black},
+  topbot/.style={draw, rounded corners, minimum width=2.2cm,
+                 minimum height=0.65cm, align=center, font=\small\bfseries,
+                 fill=blue!10}
+]
+  \node[topbot] (top)    {$\top$ (Any)};
+  \node (int)    [below left=of top,  xshift=0.5cm]  {\texttt{Int}};
+  \node (animal) [below right=of top, xshift=-0.5cm] {\texttt{Animal}};
+  \node (dog)    [below=of animal, xshift=-1cm]       {\texttt{Dog}};
+  \node (cat)    [below=of animal, xshift= 1cm]       {\texttt{Cat}};
+  \node[topbot] (bot)    [below=2.4cm of animal]      {$\bot$ (Nothing)};
+
+  \draw[arrow] (int)    -- (top);
+  \draw[arrow] (animal) -- (top);
+  \draw[arrow] (dog)    -- (animal);
+  \draw[arrow] (cat)    -- (animal);
+  \draw[arrow] (bot)    -- (dog);
+  \draw[arrow] (bot)    -- (cat);
+  \draw[arrow] (bot)    -- (int);
+\end{tikzpicture}
+\caption{The full subtype lattice bounded by $\top$ and $\bot$.  Every type
+         sits between the two extremes.}
+\label{fig:top-bottom-lattice}
+\end{figure}
+
+\section{Subtyping vs.\ Parametric Polymorphism}
+\label{sec:sub-vs-parametric}
+
+We now have two mechanisms for writing code that works with multiple types:
+\emph{subtype polymorphism} and \emph{parametric polymorphism}.  They are
+genuinely different tools, with different trade-offs.
+
+\begin{keyinsight}[Two Kinds of Polymorphism]
+\textbf{Subtype polymorphism}: A function takes a value of type $T$ (or $T*$,
+$T\&$), and at runtime, the actual value might be any subtype of $T$.  Dynamic
+dispatch selects the right behavior.  \emph{Heterogeneous collections} are
+natural: a \code{vector<Animal*>} can hold Dogs, Cats, and Birds.
+
+\textbf{Parametric polymorphism}: A function is generic over a type variable
+$\alpha$, and it works for \emph{any} $\alpha$ (possibly constrained by a
+typeclass or concept).  The same code is instantiated at compile time for each
+$\alpha$.  \emph{Homogeneous collections} are natural: a \code{vector<Dog>}
+holds only Dogs, but the container code works for any element type.
+\end{keyinsight}
+
+\begin{figure}[h]
+\centering
+\begin{tabular}{>{\bfseries}l p{5.5cm} p{5.5cm}}
+\toprule
+ & Subtype Polymorphism & Parametric Polymorphism \\
+\midrule
+Mechanism      & Inheritance + virtual dispatch & Templates/generics \\
+Resolution     & Runtime (dynamic dispatch)     & Compile time (instantiation) \\
+Cost           & Vtable lookup, pointer indirection & None (inlined); code bloat \\
+Collections    & Heterogeneous (\code{vector<Animal*>}) & Homogeneous (\code{vector<T>}) \\
+Constraints    & Must share a common supertype  & Concepts/typeclasses \\
+Open/Closed    & Open: add new subtypes freely  & Closed: fixed at instantiation \\
+Code duplication & None: one copy of the function & One copy per instantiation \\
+\bottomrule
+\end{tabular}
+\caption{Comparing the two forms of polymorphism.}
+\label{fig:poly-comparison}
+\end{figure}
+
+\subsection{When to Use Each}
+
+Use \textbf{subtype polymorphism} when:
+\begin{itemize}
+  \item You need a heterogeneous collection (a list of different kinds of
+        animals, shapes, UI widgets).
+  \item The set of concrete types is open (plug-ins, user-defined types that
+        your library does not know about at compile time).
+  \item You are modeling a domain with genuine ``is-a'' relationships that
+        should be enforced by the type system.
+\end{itemize}
+
+Use \textbf{parametric polymorphism} when:
+\begin{itemize}
+  \item You need a container or algorithm that works for many types but is
+        always used with one type at a time (sort, max, vector).
+  \item Performance is critical and virtual dispatch overhead is unacceptable
+        (game engines, numerical code, embedded systems).
+  \item You want maximum type safety: a \code{vector<Dog>} is provably
+        dog-only, unlike a \code{vector<Animal*>} which could sneak in cats.
+  \item The types satisfy constraints that do not fit neatly into an
+        inheritance hierarchy (e.g., ``hashable and comparable'').
+\end{itemize}
+
+In C++, you often use \textbf{both} together:
+
+\begin{lstlisting}[style=cpp]
+#include <algorithm>
+#include <vector>
+#include <memory>
+
+class Shape {
+public:
+    virtual double area() const = 0;
+    virtual ~Shape() = default;
+};
+
+class Circle : public Shape {
+    double r_;
+public:
+    explicit Circle(double r) : r_(r) {}
+    double area() const override { return 3.14159 * r_ * r_; }
+};
+
+// Parametric over the container element type (T must be Shape*)
+// but uses subtype polymorphism to call area() via virtual dispatch.
+template<typename Container>
+double totalArea(const Container& shapes) {
+    double sum = 0;
+    for (const auto& s : shapes) sum += s->area();
+    return sum;
+}
+
+int main() {
+    // Subtype polymorphism: heterogeneous collection via base pointer
+    std::vector<std::unique_ptr<Shape>> shapes;
+    shapes.push_back(std::make_unique<Circle>(3.0));
+    // ... add more shapes ...
+
+    // Parametric polymorphism: totalArea works for any container
+    double total = totalArea(shapes);
+}
+\end{lstlisting}
+
+\subsection{The Expression Problem}
+
+A subtle trade-off between the two approaches is captured by the \emph{Expression
+Problem} (Philip Wadler, 1998): given a data type with multiple variants and
+multiple operations on it, can you add new variants and new operations without
+modifying existing code?
+
+\begin{itemize}
+  \item With \textbf{subtyping (OOP style)}: adding a new variant (a new
+        subclass) is easy---just write a new class.  Adding a new operation
+        means modifying the base class and every existing subclass.
+  \item With \textbf{pattern matching / algebraic data types (functional
+        style)}: adding a new operation is easy---just write a new function.
+        Adding a new variant means updating every existing function.
+\end{itemize}
+
+Neither approach solves both problems elegantly.  This is an inherent tension,
+not a bug in any particular language.
+
+\section{Type-Theoretic Problems with Subtyping}
+\label{sec:subtyping-problems}
+
+Subtyping is powerful, but it comes with genuine costs to the type system.
+
+\subsection{Subtyping Complicates Type Inference}
+
+In Chapter~6 we saw how Hindley-Milner type inference works beautifully for a
+language with parametric polymorphism but without subtyping.  Add subtyping, and
+inference becomes dramatically harder.
+
+The core problem: when you see an expression $e$ used in a context expecting
+type $T$, in the absence of subtyping, $e$ must have type $T$ (or something
+alpha-equivalent).  With subtyping, $e$ could have type $S$ for any $S <: T$.
+Now the inference algorithm must find the \emph{principal type}---the most
+specific type of $e$ consistent with all uses---while also tracking all the
+possible subtype relationships.
+
+This is why languages with rich subtyping (Java, Scala, Kotlin, TypeScript)
+require you to write many more type annotations than, say, Haskell (which has
+no subtyping).  The inference problems are generally undecidable or
+exponentially hard in the presence of both parametric polymorphism and
+subtyping, which is why real language implementations make compromises.
+
+\begin{remark}
+Haskell deliberately has \textbf{no subtyping} (not even for numeric types;
+\code{Int} and \code{Integer} are completely unrelated).  This purity is what
+makes Hindley-Milner inference complete and efficient for Haskell.  The language
+uses typeclasses (a form of constrained parametric polymorphism) instead of
+subtyping for code reuse.  Haskell programmers sometimes argue this is
+strictly better; OOP programmers sometimes argue it is awkward.  Both
+perspectives have merit.
+\end{remark}
+
+\subsection{The Covariant Array Problem: Java's Famous Mistake}
+\label{sec:java-array-problem}
+
+Java's designers made a decision in 1995 that type theorists still wince about:
+they made arrays \emph{covariant}.  In Java, \code{Dog[]} is a subtype of
+\code{Animal[]}.  This sounds natural---a list of dogs is a list of animals,
+right?
+
+Wrong.  Arrays are mutable.  The result is that Java's type system has a hole
+that causes \emph{runtime} exceptions that the type checker cannot prevent:
+
+\begin{lstlisting}[style=pseudocode]
+// Java -- this compiles but throws at runtime!
+Dog[] dogs = { new Dog(), new Dog() };
+Animal[] animals = dogs;    // OK: covariant arrays, Dog[] <: Animal[]
+
+animals[0] = new Cat();     // Type-checks: Cat is an Animal, right?
+                            // BUT: animals IS dogs -- runtime throws
+                            // ArrayStoreException here!
+
+Dog d = dogs[0];            // Would be a Cat, breaking type safety
+\end{lstlisting}
+
+To prevent this at runtime, Java arrays carry a runtime type tag and throw
+\code{ArrayStoreException} on any store that would violate the actual element
+type.  This is a runtime check to compensate for a compile-time type system
+error.
+
+\begin{warning}[Covariant Mutable Containers Are Unsound]
+As we saw with depth subtyping and mutable containers: if a container is
+mutable, it \emph{must} be invariant in its element type to be type-safe.
+Covariant mutable arrays (Java) require a runtime type check.  Invariant arrays
+(C\#'s \code{IList<T>}, C++'s \code{std::vector<T>}) are enforced at compile
+time with no runtime overhead.
+
+Java fixed this mistake with generics (Java 5, 2004): \code{List<Dog>} is
+\emph{not} a subtype of \code{List<Animal>} in Java generics (they are
+invariant).  But the old array covariance was kept for backward compatibility,
+leaving Java with two incompatible rules for sequences.
+\end{warning}
+
+C\# made the same mistake initially with arrays and later introduced correct
+covariant interfaces (\code{IEnumerable<out T>}) and invariant mutable ones
+(\code{IList<T>}).  TypeScript also has covariant method parameters by default
+(a known unsoundness, traded for usability).
+
+\subsection{Subtyping and Overloading Interact Badly}
+
+When a language has both subtyping and function overloading (multiple functions
+with the same name but different parameter types), the question of which
+overload to call becomes highly non-trivial.
+
+In C++, overload resolution happens at \emph{compile time} based on the
+\emph{static} type of arguments.  This can cause surprises:
+
+\begin{lstlisting}[style=cpp]
+#include <iostream>
+
+class Animal {};
+class Dog : public Animal {};
+
+void process(Animal* a) { std::cout << "process(Animal*)\n"; }
+void process(Dog* d)    { std::cout << "process(Dog*)\n"; }
+
+int main() {
+    Dog* d = new Dog;
+    Animal* a = d;        // a's static type is Animal*, dynamic type is Dog*
+
+    process(d);    // prints "process(Dog*)"    -- static type is Dog*
+    process(a);    // prints "process(Animal*)" -- static type is Animal*!
+                   // Even though *a really is a Dog at runtime.
+
+    delete d;
+}
+\end{lstlisting}
+
+This is called the \emph{double dispatch problem}: if you want to dispatch on
+the runtime types of \emph{multiple} arguments simultaneously (as in the Visitor
+pattern), neither virtual dispatch (which dispatches on one receiver) nor
+overload resolution (which uses static types) does what you want alone.  The
+Visitor pattern is an elaborate workaround for this limitation.
+
+\subsection{Subtyping and Recursive Types}
+
+Subtyping for recursive types (types that refer to themselves, like trees and
+lists) requires careful handling.  The na\"ive approach of unrolling recursive
+types and checking subtyping step by step can loop forever.
+
+There are two main approaches:
+\begin{itemize}
+  \item \textbf{Equirecursive types}: the type $\mu \alpha. F(\alpha)$ is
+        treated as equal to $F(\mu \alpha. F(\alpha))$ by definition, and
+        subtyping is defined coinductively---you assume the subtype relation
+        holds and check that no contradiction arises.
+  \item \textbf{Isorecursive types}: you must explicitly fold and unfold
+        recursive types.  The types $\mu \alpha. F(\alpha)$ and
+        $F(\mu \alpha. F(\alpha))$ are isomorphic but not identical.
+        Subtyping must account for these explicit steps.
+\end{itemize}
+
+C++ uses a nominal approach: class hierarchy membership is determined by the
+explicit inheritance declarations, so recursive types (\code{struct Node \{
+Node* next; \}}) do not cause the subtyping algorithm to loop.
+
+\section{Bounded Quantification: Mixing Parametricity and Subtyping}
+\label{sec:bounded-quantification}
+
+One of the most useful results of combining parametric polymorphism with
+subtyping is \emph{bounded quantification}.  Instead of saying ``this function
+works for any type $\alpha$,'' you say ``this function works for any type
+$\alpha$ that is a subtype of $T$.''
+
+The formal notation is $\forall \alpha <: T.\; F(\alpha)$: ``for all $\alpha$
+bounded above by $T$, the function type $F(\alpha)$.''
+
+\begin{cppconnection}[Bounded Quantification with Concepts in C++20]
+C++ concepts are an approximation of bounded quantification.  Instead of
+bounding by a supertype, you bound by a set of required operations:
+
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+#include <iostream>
+
+// Bounded quantification: T must be derived from Animal
+template<std::derived_from<Animal> T>
+void examine(const T& animal) {
+    animal.speak();           // We know T has speak() because it IS an Animal
+    // ... do type-safe things ...
+}
+
+// Or bound by a concept:
+template<typename T>
+concept Drawable = requires(T t) {
+    { t.draw() } -> std::same_as<void>;
+    { t.area() } -> std::convertible_to<double>;
+};
+
+template<Drawable T>
+void render(const T& shape) {
+    std::cout << "Area: " << shape.area() << '\n';
+    shape.draw();
+}
+\end{lstlisting}
+
+In the System $F_{<:}$ type theory (Pierce, ``Types and Programming Languages''),
+bounded quantification is formalized as $\forall \alpha <: T.\; B$.  This
+system is unfortunately undecidable in general (the ``kernel'' fragment is
+decidable), but practical languages restrict it to decidable subsets.
+\end{cppconnection}
+
+\section{Practical Guidelines: Designing with Subtyping in Mind}
+\label{sec:guidelines}
+
+Given everything we have learned, here is practical guidance for designing
+type hierarchies in C++ and similar languages.
+
+\subsection{Prefer Composition Over Inheritance}
+
+Deep inheritance hierarchies are often a sign of overusing subtyping.  A
+\code{Dog} that inherits from \code{PetAnimal} which inherits from \code{Animal}
+which inherits from \code{LivingThing} which inherits from \code{Entity} is
+fragile: a change anywhere in the chain can break all descendants.
+
+Consider using composition instead: a \code{Dog} \emph{has} a \code{Pet}
+behavior, a \code{Vocalizer} behavior, etc.  This separates concerns without
+the tight coupling of inheritance.
+
+\subsection{Use Interfaces, Not Implementation Inheritance, for Subtyping}
+
+Pure virtual classes (abstract interfaces) in C++ provide subtyping without
+implementation inheritance.  This gives you the type-safety benefits of the
+subtype relation without the fragile base class problem.
+
+\subsection{Make Data Immutable When Using Depth Subtyping}
+
+If you need depth subtyping (a \code{CatOwner} where a \code{PetOwner} is
+expected), make the \code{pet} field immutable (or at least const at the
+point of use).  This avoids the mutation unsoundness we saw earlier.
+
+\subsection{Use Templates for Homogeneous Containers; Subtyping for Heterogeneous}
+
+When you need ``a list of the same kind of thing,'' use \code{vector<T>}.
+When you need ``a list of possibly different things that share an interface,''
+use \code{vector<shared\_ptr<Base>>}.  Do not try to make \code{vector<Dog>}
+a subtype of \code{vector<Animal>}---it is not.
+
+\subsection{Respect the Liskov Substitution Principle Semantically}
+
+The type system enforces syntactic subtyping.  It does \emph{not} check that a
+subtype preserves all invariants and contracts.  If \code{Dog} is declared as a
+subtype of \code{Animal}, but \code{Dog::makeSound()} throws an exception when
+\code{Animal::makeSound()} is specified to never throw, you have violated the
+LSP even though your code compiles.  Testing and documentation are the tools for
+enforcing the semantic part.
+
+\section{Summary: The Subtyping Landscape}
+\label{sec:subtyping-summary}
+
+We have covered a great deal of ground.  Let us consolidate.
+
+The central idea: $S <: T$ means ``$S$ can safely substitute for $T$,'' formalized
+by the subsumption rule.  The $<:$ relation is a preorder (reflexive and
+transitive) on types.
+
+The two families of subtyping:
+\begin{itemize}
+  \item \textbf{Nominal} (C++, Java): declared through inheritance.
+  \item \textbf{Structural} (Go, TypeScript): inferred from the shape of types.
+\end{itemize}
+
+Width and depth subtyping for records: more fields makes a subtype (width);
+more specific field types makes a subtype (depth, but only safely for immutable
+fields).
+
+C++ inheritance: public inheritance establishes the nominal subtype relation.
+Virtual functions provide dynamic dispatch; vtables are the runtime mechanism.
+Covariant return types are allowed; contravariant parameters are not (a known
+gap).
+
+Variance---the relationship between $F\langle A\rangle$ and $F\langle B\rangle$
+when $A <: B$:
+\begin{itemize}
+  \item \textbf{Covariant}: same direction.  Read-only containers, return types.
+  \item \textbf{Contravariant}: reversed direction.  Write-only views, parameters.
+  \item \textbf{Invariant}: no forced relationship.  Mutable containers (the
+        safe default).
+\end{itemize}
+
+Function subtyping: contravariant in parameters, covariant in return type.  This
+is the fundamental variance rule.
+
+Top ($\top$) and bottom ($\bot$) types bound the lattice.  $\bot <: T <: \top$
+for every $T$.
+
+Subtyping vs.\ parametric polymorphism: runtime dispatch and heterogeneity vs.\
+compile-time instantiation and homogeneity.  C++ supports both.
+
+Type-theoretic costs: subtyping makes inference hard, enables the covariant
+array unsoundness (Java's mistake), complicates overloading, and requires care
+with recursive types.
+
+\begin{takeaway}[Chapter 7 Takeaways]
+\begin{itemize}
+  \item \textbf{Subtyping} ($S <: T$) means: any $S$ can safely stand in for
+        a $T$.  This is the substitution principle, formalized by the
+        subsumption typing rule.
+  \item The $<:$ relation is a \textbf{preorder}: reflexive and transitive.
+        Visualize it as a lattice with arrows pointing upward to supertypes.
+  \item \textbf{Nominal} subtyping (C++, Java) requires explicit declarations.
+        \textbf{Structural} subtyping (Go, TypeScript) is inferred from shape.
+  \item \textbf{Width subtyping}: more fields $\Rightarrow$ more specific type.
+        \textbf{Depth subtyping}: more specific field types $\Rightarrow$ more
+        specific record type (safe only for immutable fields).
+  \item \textbf{Variance} asks: if $A <: B$, is $F\langle A\rangle <:
+        F\langle B\rangle$?  Answer: covariant (same), contravariant (reversed),
+        or invariant (no relation).
+  \item \textbf{Function subtyping}: parameters are \textbf{contravariant},
+        return type is \textbf{covariant}.  A function accepting broader inputs
+        and returning narrower outputs is more specific.
+  \item \textbf{Mutable containers are invariant}.  Making them covariant (as
+        Java did for arrays) introduces unsoundness requiring runtime checks.
+  \item \textbf{Subtyping vs.\ generics}: use subtyping for heterogeneous,
+        open, runtime-dispatched code; use generics for homogeneous,
+        closed, compile-time code.  C++ gives you both---use each where it fits.
+  \item \textbf{Top} ($\top$): supertype of everything; \textbf{bottom}
+        ($\bot$): subtype of everything (has no values; returned only by
+        non-terminating/throwing functions).
+  \item Subtyping \textbf{complicates type inference} significantly.  This is
+        why Haskell avoids subtyping entirely, relying on typeclasses instead.
+\end{itemize}
+\end{takeaway}
+
+\section*{Exercises}
+\label{sec:subtyping-exercises}
+
+\begin{exercise}
+\textbf{Subtype or not?}  For each pair of types below, decide whether the
+first is a subtype of the second, the second is a subtype of the first, they
+are mutual subtypes, or they have no subtype relationship.  Justify each answer.
+\begin{enumerate}[label=(\alph*)]
+  \item $\{x:\mathbb{Z},\; y:\mathbb{Z}\}$ and $\{x:\mathbb{Z},\; y:\mathbb{Z},\; z:\mathbb{Z}\}$
+  \item $(\text{Animal} \to \mathbb{Z})$ and $(\text{Dog} \to \mathbb{Z})$
+  \item $(\mathbb{Z} \to \text{Dog})$ and $(\mathbb{Z} \to \text{Animal})$
+  \item $\bot$ and any type $T$
+  \item $\top$ and $\text{Int}$
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+\textbf{Variance classification.}  For each type constructor below, determine
+whether it is covariant, contravariant, or invariant in its type parameter $T$.
+Justify your answer by describing what goes wrong if you got it wrong.
+\begin{enumerate}[label=(\alph*)]
+  \item \code{ReadStream<T>}: a stream you can only read from (each call to
+        \code{read()} returns a $T$).
+  \item \code{WriteStream<T>}: a stream you can only write to (each call to
+        \code{write(t: T)} puts a $T$ in).
+  \item \code{Transformer<T>}: has both \code{read() -> T} and
+        \code{write(t: T)}.
+  \item The function type $T \to \mathbb{Z}$ (functions from $T$ to integers).
+  \item The function type $\mathbb{Z} \to T$ (functions from integers to $T$).
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+\textbf{The Java array problem.}  Write out (in pseudocode) a sequence of
+operations starting with \code{Dog[] dogs = \{new Dog()\}} that leads to a type
+violation using Java's covariant arrays.  Then explain in one paragraph why
+making arrays \emph{invariant} would have prevented the problem (at the cost of
+what convenience?).
+\end{exercise}
+
+\begin{exercise}
+\textbf{Implement the Visitor pattern.}  In C++, implement a Visitor pattern for
+an expression tree with node types \typename{NumberExpr} (holds an \code{int}),
+\typename{AddExpr} (holds two sub-expressions), and \typename{MulExpr} (holds
+two sub-expressions).  Write two visitors: one that evaluates the expression and
+one that pretty-prints it to a string.  Explain how this pattern simulates
+double dispatch using only single dispatch (virtual function calls on the
+expression nodes).
+\end{exercise}
+
+\begin{exercise}
+\textbf{Function variance in C++.}  C++ supports covariant return types in
+virtual function overrides.  Verify this with a concrete example: create a base
+class \typename{Creator} with a virtual method \code{create() -> Animal*}, and
+a derived class \typename{DogCreator} that overrides it with
+\code{create() -> Dog*}.  Confirm that the code compiles.  Then try to create
+a \emph{contravariant parameter override} (change a parameter from \code{Dog*}
+to \code{Animal*} in the override) and observe that the compiler treats it as a
+new overload rather than an override.  What would need to change in C++ to
+support contravariant parameters?
+\end{exercise}
+
+\begin{exercise}
+\textbf{Structural vs.\ nominal.}  Consider two struct types:
+\begin{lstlisting}[style=pseudocode]
+type Celsius    = { value: Float }
+type Kilograms  = { value: Float }
+\end{lstlisting}
+Under structural subtyping, would \typename{Celsius} $<:$ \typename{Kilograms}
+and vice versa?  Is this desirable?  What does this tell you about one of the
+weaknesses of structural subtyping?  How does nominal subtyping solve this
+problem, and what does it cost?
+\end{exercise}
+
+\begin{exercise}
+\textbf{Top and bottom in code.}  In C++17:
+\begin{enumerate}[label=(\alph*)]
+  \item Write a function that demonstrates \code{std::any} acting as a top type:
+        store values of at least three different types (\code{int}, \code{string},
+        and a custom class) in a \code{std::vector<std::any>}, then retrieve and
+        print each.
+  \item Write a function marked \code{[[noreturn]]} and show it being used in
+        both a branch that returns \code{int} and a branch that returns
+        \code{std::string}---demonstrating that the bottom type is compatible
+        with any return type.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Challenge]
+\textbf{Designing a sound covariant collection.}  Design a read-only view type
+\code{ReadOnlySpan<T>} in C++ that:
+\begin{itemize}
+  \item Wraps an existing container (e.g., \code{std::vector<T>}).
+  \item Provides only \code{size()}, \code{operator[]} returning \code{const T\&},
+        and iteration.
+  \item Has no mutation operations.
+\end{itemize}
+Argue (informally) why it would be \emph{safe} in theory to treat
+\code{ReadOnlySpan<Dog>} as a \code{ReadOnlySpan<Animal>}.  Then implement a
+template function that takes a \code{const std::vector<T>\&} and accepts both
+\code{vector<Dog>} and \code{vector<Animal>}---discuss the trade-offs of using
+a template parameter vs.\ a base-class pointer approach.
+\end{exercise}

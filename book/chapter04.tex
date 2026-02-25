@@ -1,0 +1,1541 @@
+% ============================================================
+%  Chapter 4: Functions and the Lambda Calculus
+%  Type Theory from the Ground Up
+% ============================================================
+
+\chapter{Functions and the Lambda Calculus}
+
+\begin{quote}
+\itshape
+``It is not enough to be a good programmer. You must also think about what
+programming means.''\\[0.3em]
+\upshape --- Paraphrasing Alonzo Church, 1936
+\end{quote}
+
+\bigskip
+
+We have spent three chapters building up a vocabulary of types: base types
+like \Bool\ and \Nat, product types that pair things together, and sum types
+that give us choices. Now it is time to meet the concept that ties everything
+together --- the \emph{function}.
+
+This is not a chapter about functions as a convenient programming tool. This
+is a chapter about functions as the \emph{foundation of all computation}. We
+are going to meet a tiny, austere, almost ridiculously minimal system invented
+by a logician in the 1930s --- the \textbf{lambda calculus} --- and discover
+that it can compute literally anything a modern computer can compute. Then we
+will add types to it, producing the \textbf{simply typed lambda calculus
+(STLC)}, which is the direct theoretical ancestor of every typed programming
+language you have ever used.
+
+By the end of this chapter you will look at a C++ lambda like
+\code{[](int x)\{ return x + 1; \}} and see not just a convenient shorthand,
+but a concrete realisation of a 90-year-old mathematical idea.
+
+% ----------------------------------------------------------------
+\section{Why Functions Matter So Much}
+% ----------------------------------------------------------------
+
+Let us start with a bold claim and then spend the rest of the chapter
+justifying it.
+
+\begin{keyinsight}[The Central Claim]
+The function type $A \to B$ is the most important type constructor in all of
+type theory. Every other type constructor can be \emph{encoded} using only
+functions. Understanding functions deeply means understanding types deeply.
+\end{keyinsight}
+
+Why are functions so central? Because a function is the purest possible
+description of a \emph{transformation}. When we write $f : A \to B$ we are
+saying: ``give me something of type $A$, and I will produce something of type
+$B$.'' That is the essence of computation. Computation is transformation:
+input becomes output.
+
+In mathematics, functions were traditionally thought of as sets of pairs ---
+the \emph{graph} of a function. The function ``add one'' was the infinite set
+$\{(0, 1), (1, 2), (2, 3), \ldots\}$. This view is fine for classical
+mathematics, but it is terrible for computing. You cannot store an infinite
+set in memory and look things up in it.
+
+Alonzo Church, working at Princeton in the mid-1930s, proposed a completely
+different way to think about functions: as \emph{rules for computation},
+written down explicitly. His system, the lambda calculus, lets you write down
+the rule ``add one to $x$'' as a precise syntactic expression: $\lambda x.\;
+x + 1$. This is a function you can actually compute with.
+
+At almost exactly the same time, Alan Turing invented his abstract computing
+machines. Church and Turing were working independently, and they arrived at
+completely equivalent notions of computability. This equivalence --- the
+Church--Turing thesis --- is one of the deepest results in all of computer
+science. It says: \emph{functions (in Church's sense) and machines (in
+Turing's sense) compute exactly the same things}.
+
+For type theory, the functional view wins. Types are naturally about
+\emph{what something is}, and a function's type $A \to B$ tells us exactly
+what it does: it turns $A$s into $B$s. Turing machines have no natural notion
+of type.
+
+% ----------------------------------------------------------------
+\section{The Untyped Lambda Calculus}
+% ----------------------------------------------------------------
+
+Alonzo Church's lambda calculus is defined by three things, and only three
+things. Let us call the set of all lambda calculus expressions
+$\Lambda$.\footnote{This is sometimes called the set of \emph{lambda terms}.}
+
+\begin{definition}[Lambda Terms]
+\label{def:lambda-terms}
+The set $\Lambda$ of \textbf{lambda terms} is defined inductively:
+\begin{enumerate}[label=(\roman*)]
+  \item \textbf{Variables}: if $x$ is a variable name, then $x \in \Lambda$.
+  \item \textbf{Abstraction}: if $x$ is a variable and $e \in \Lambda$, then
+        $(\lambda x.\; e) \in \Lambda$.
+  \item \textbf{Application}: if $e_1 \in \Lambda$ and $e_2 \in \Lambda$,
+        then $(e_1\; e_2) \in \Lambda$.
+\end{enumerate}
+\end{definition}
+
+That really is it. Three clauses. Let us understand each one.
+
+\paragraph{Variables.} A variable is just a name --- a placeholder, like $x$
+or $y$ or $\mathit{foo}$. On its own, a variable stands for ``whatever was
+passed in.'' Variables are the atoms of the lambda calculus.
+
+\paragraph{Abstraction.} The expression $\lambda x.\; e$ means ``a function
+that takes an argument $x$ and produces the result $e$.'' The $\lambda$ symbol
+is the binder: it introduces $x$ as a local name. The expression after the
+dot, $e$, is the \emph{body} of the function. For example:
+\[
+  \lambda x.\; x
+\]
+is the identity function: it takes $x$ and returns $x$. And
+\[
+  \lambda x.\; \lambda y.\; x
+\]
+is a function that takes $x$, then takes $y$, and returns $x$ (ignoring $y$).
+This is the \emph{constant function} constructor.
+
+\paragraph{Application.} The expression $e_1\; e_2$ means ``apply function
+$e_1$ to argument $e_2$.'' Parentheses are used to disambiguate. Application
+is \emph{left-associative}: $e_1\; e_2\; e_3$ means $(e_1\; e_2)\; e_3$,
+i.e., first apply $e_1$ to $e_2$, then apply the result to $e_3$.
+
+\begin{intuition}
+Think of abstraction ($\lambda x.\; e$) as writing a function definition, and
+application ($e_1\; e_2$) as calling a function. The lambda calculus is just
+function definitions and function calls --- nothing else.
+\end{intuition}
+
+\subsection{Free and Bound Variables}
+
+The $\lambda$ in $\lambda x.\; e$ \emph{binds} the variable $x$ within the
+body $e$. We say $x$ is a \textbf{bound variable} in $\lambda x.\; e$. A
+variable that is not bound by any enclosing $\lambda$ is called
+\textbf{free}.
+
+\begin{example}[Free and Bound Variables]
+In the term $\lambda x.\; x\; y$:
+\begin{itemize}
+  \item $x$ is \emph{bound} (introduced by the $\lambda x$).
+  \item $y$ is \emph{free} (no enclosing $\lambda$ binds it).
+\end{itemize}
+
+In the term $\lambda x.\; \lambda y.\; x\; y$:
+\begin{itemize}
+  \item Both $x$ and $y$ are bound.
+  \item There are no free variables; this term is called a \textbf{closed
+        term} or a \textbf{combinator}.
+\end{itemize}
+
+In the term $(\lambda x.\; x)\; y$:
+\begin{itemize}
+  \item $x$ is bound inside the abstraction.
+  \item $y$ is free (it is the argument being passed in).
+\end{itemize}
+\end{example}
+
+The distinction between free and bound variables matters enormously when we
+start substituting terms for variables. We will come back to this when we
+discuss closures and captures in C++.
+
+\subsection{The Three Reduction Rules}
+
+The lambda calculus has three fundamental \emph{reduction rules} that define
+how expressions are simplified (computed).
+
+\subsubsection{Alpha Reduction ($\alpha$-reduction)}
+
+Alpha reduction says that the name of a bound variable does not matter. The
+functions $\lambda x.\; x$ and $\lambda y.\; y$ are the same function ---
+both are the identity. We can \emph{rename} bound variables freely:
+\[
+  \lambda x.\; e \;\;\equiv_\alpha\;\; \lambda y.\; e[x \mapsto y]
+\]
+(provided $y$ does not appear free in $e$). Here $e[x \mapsto y]$ means
+``replace every free occurrence of $x$ in $e$ with $y$''.
+
+This is exactly like the fact that in mathematics, $\sum_{i=1}^{n} i$ and
+$\sum_{k=1}^{n} k$ are the same sum. The choice of dummy variable is
+irrelevant.
+
+\begin{warning}[Alpha Capture]
+You must be careful not to rename a variable to one that already appears free
+in the body. For example, $\lambda x.\; x\; y$ cannot be alpha-renamed to
+$\lambda y.\; y\; y$, because the second $y$ would now erroneously refer to
+the bound variable rather than the original free variable. This mistake is
+called \textbf{variable capture}. Always choose a fresh name.
+\end{warning}
+
+\subsubsection{Beta Reduction ($\beta$-reduction)}
+
+Beta reduction is the heart of computation. It says: to apply a function
+$\lambda x.\; e$ to an argument $a$, substitute $a$ for every free occurrence
+of $x$ in $e$:
+\[
+  (\lambda x.\; e)\; a \;\;\to_\beta\;\; e[x \mapsto a]
+\]
+
+\begin{example}[Beta Reduction Steps]
+Let us apply the identity function to itself:
+\[
+  (\lambda x.\; x)\; (\lambda y.\; y)
+  \;\;\to_\beta\;\; (\lambda y.\; y)
+\]
+We substituted $(\lambda y.\; y)$ for $x$ in the body $x$, yielding
+$(\lambda y.\; y)$. The identity function applied to anything returns that
+thing --- including itself.
+
+Now a two-step example. Let $K = \lambda x.\; \lambda y.\; x$ (the constant
+function). Apply it:
+\[
+  K\; \mathit{foo}\; \mathit{bar}
+  \;=\; ((\lambda x.\; \lambda y.\; x)\; \mathit{foo})\; \mathit{bar}
+  \;\to_\beta\; (\lambda y.\; \mathit{foo})\; \mathit{bar}
+  \;\to_\beta\; \mathit{foo}
+\]
+$K$ takes two arguments and returns the first, discarding the second.
+\end{example}
+
+\subsubsection{Eta Reduction ($\eta$-reduction)}
+
+Eta reduction captures the principle of \emph{extensionality}: two functions
+are equal if they produce the same output for every input. If $f$ is a
+function, then $\lambda x.\; f\; x$ is a function that does exactly the same
+thing as $f$ --- it just wraps $f$ in an extra layer. Eta reduction collapses
+this:
+\[
+  \lambda x.\; f\; x \;\;\to_\eta\;\; f
+  \qquad \text{(provided $x$ does not appear free in $f$)}
+\]
+
+\begin{intuition}
+Eta reduction is the lambda calculus version of saying ``$g(x) = f(x)$ for
+all $x$ implies $g = f$.'' In most practical programming, eta reduction
+corresponds to removing unnecessary lambda wrappers. If you have written
+\code{[](int x)\{ return f(x); \}} in C++, eta reduction tells you this is
+identical to just writing \code{f} directly.
+\end{intuition}
+
+\subsection{Confluence and Normal Forms}
+
+A lambda term is in \textbf{normal form} if no $\beta$-reduction can be
+applied to it. Normal forms are the ``answers'' of a computation. The
+lambda calculus enjoys a beautiful property called \textbf{confluence} (also
+known as the Church--Rosser property):
+
+\begin{theorem}[Church--Rosser Theorem, informal]
+If a lambda term $e$ can be reduced to two different terms $e_1$ and $e_2$ by
+different sequences of reductions, then there exists a term $e'$ to which both
+$e_1$ and $e_2$ can be further reduced.
+\end{theorem}
+
+In other words: the order in which you perform reductions does not affect the
+\emph{final} answer. The normal form, if it exists, is unique.
+
+However --- and this is crucial --- not every term has a normal form. The
+term $\Omega = (\lambda x.\; x\; x)\; (\lambda x.\; x\; x)$ reduces to
+itself forever:
+\[
+  \Omega \to_\beta \Omega \to_\beta \Omega \to_\beta \cdots
+\]
+This corresponds to an infinite loop. The untyped lambda calculus is
+Turing-complete, which means it can express programs that run forever. We will
+see that adding types fixes this.
+
+% ----------------------------------------------------------------
+\section{Church Encodings: Everything Is a Function}
+% ----------------------------------------------------------------
+
+Here is one of the most mind-bending ideas in all of computer science: in the
+lambda calculus, there are no built-in data types. There is no primitive
+``boolean'', no primitive ``integer'', no primitive ``pair''. Everything ---
+and we mean \emph{everything} --- can be encoded as a function.
+
+\subsection{Church Booleans}
+
+We need to encode \code{true} and \code{false}. The key insight is: what do
+booleans \emph{do}? They make choices. An \code{if} expression takes a
+condition, a ``then'' value, and an ``else'' value, and returns one of the
+two. So let us encode \code{true} and \code{false} as functions that make that
+choice:
+
+\[
+  \mathsf{true}  \;=\; \lambda x.\; \lambda y.\; x
+\]
+\[
+  \mathsf{false} \;=\; \lambda x.\; \lambda y.\; y
+\]
+
+\code{true} is a function that takes two arguments and returns the \emph{first}
+one. \code{false} is a function that takes two arguments and returns the
+\emph{second} one.
+
+Now the \code{if} construct is trivial: it is just application!
+\[
+  \mathsf{if}\; b\; t\; e \;=\; b\; t\; e
+\]
+If $b$ is \code{true}, this returns $t$. If $b$ is \code{false}, this returns
+$e$. Let us verify:
+\[
+  \mathsf{true}\; \mathit{yes}\; \mathit{no}
+  = (\lambda x.\; \lambda y.\; x)\; \mathit{yes}\; \mathit{no}
+  \to_\beta (\lambda y.\; \mathit{yes})\; \mathit{no}
+  \to_\beta \mathit{yes} \qquad \checkmark
+\]
+\[
+  \mathsf{false}\; \mathit{yes}\; \mathit{no}
+  = (\lambda x.\; \lambda y.\; y)\; \mathit{yes}\; \mathit{no}
+  \to_\beta (\lambda y.\; y)\; \mathit{no}
+  \to_\beta \mathit{no} \qquad \checkmark
+\]
+
+We can even define the boolean operators. Logical \code{and} is:
+\[
+  \mathsf{and} \;=\; \lambda p.\; \lambda q.\; p\; q\; \mathsf{false}
+\]
+Read it: ``if $p$ is true, return $q$; otherwise return false.'' Logical
+\code{or} is:
+\[
+  \mathsf{or} \;=\; \lambda p.\; \lambda q.\; p\; \mathsf{true}\; q
+\]
+And \code{not} is:
+\[
+  \mathsf{not} \;=\; \lambda p.\; p\; \mathsf{false}\; \mathsf{true}
+\]
+
+\begin{keyinsight}[Booleans as Eliminators]
+This encoding reveals a deep truth: a boolean is not just a value, it is an
+\emph{eliminator} for a two-way choice. In type theory language, the Church
+encoding of a type $T$ is precisely the \emph{fold} for that type. This theme
+--- data types as their own eliminators --- recurs throughout the book.
+\end{keyinsight}
+
+\subsection{Church Numerals}
+
+Natural numbers can also be encoded as functions. The key question is: what is
+the \emph{essence} of a natural number? A natural number $n$ represents
+``doing something $n$ times.'' Church captured this:
+
+\[
+  \mathsf{zero}  \;=\; \lambda f.\; \lambda x.\; x
+\]
+\[
+  \mathsf{one}   \;=\; \lambda f.\; \lambda x.\; f\; x
+\]
+\[
+  \mathsf{two}   \;=\; \lambda f.\; \lambda x.\; f\; (f\; x)
+\]
+\[
+  \mathsf{three} \;=\; \lambda f.\; \lambda x.\; f\; (f\; (f\; x))
+\]
+
+The Church numeral $n$ takes a function $f$ and a starting value $x$, and
+applies $f$ to $x$ exactly $n$ times. Zero means ``apply $f$ zero times,''
+which just gives back $x$.
+
+Arithmetic operations arise naturally. The successor function adds one more
+application of $f$:
+\[
+  \mathsf{succ} \;=\; \lambda n.\; \lambda f.\; \lambda x.\; f\; (n\; f\; x)
+\]
+
+Addition is ``do $m$ times, then do $n$ more times'':
+\[
+  \mathsf{add} \;=\; \lambda m.\; \lambda n.\; \lambda f.\; \lambda x.\;
+  m\; f\; (n\; f\; x)
+\]
+
+Multiplication is ``do $n$ times, where each `time' means doing $m$ times'':
+\[
+  \mathsf{mul} \;=\; \lambda m.\; \lambda n.\; \lambda f.\;
+  m\; (n\; f)
+\]
+
+\begin{example}[Church Addition]
+Let us verify that $\mathsf{add}\; \mathsf{two}\; \mathsf{three}$ reduces
+to $\mathsf{five}$. Rather than grinding through every beta step, notice:
+\[
+  \mathsf{add}\; \mathsf{two}\; \mathsf{three}
+  = \lambda f.\; \lambda x.\; \mathsf{two}\; f\; (\mathsf{three}\; f\; x)
+  = \lambda f.\; \lambda x.\; f\; (f\; (f\; (f\; (f\; x))))
+\]
+That is five applications of $f$, which is exactly $\mathsf{five}$. $\checkmark$
+\end{example}
+
+The fact that you can build all of arithmetic from nothing but function
+abstraction and application is, frankly, astonishing. Church encodings are
+not just a curiosity --- they are a foundational proof that functions are
+sufficient for all of computation.
+
+% ----------------------------------------------------------------
+\section{The Simply Typed Lambda Calculus}
+% ----------------------------------------------------------------
+
+The untyped lambda calculus is beautiful but dangerous. It is too expressive:
+it lets you write $\Omega$ (infinite loops) and lets you apply a function to
+itself in arbitrary ways. Type systems were introduced to rule out these bad
+terms.
+
+The \textbf{Simply Typed Lambda Calculus (STLC)}, developed by Church in
+1940, adds a type annotation to every $\lambda$. Where untyped lambda writes
+$\lambda x.\; e$, the STLC writes $\lambda x : A.\; e$, meaning ``$x$ has
+type $A$.'' This small addition has enormous consequences.
+
+\subsection{Types in the STLC}
+
+The types of the STLC are built from:
+\begin{itemize}
+  \item \textbf{Base types}: atomic types like $\Bool$, $\Nat$, or any other
+        ground type we declare. We write them as $o$, $\iota$, or just name
+        them directly.
+  \item \textbf{Function types}: if $A$ and $B$ are types, then $A \to B$ is
+        the type of functions from $A$ to $B$. The arrow $\to$ is
+        \emph{right-associative}: $A \to B \to C$ means $A \to (B \to C)$.
+\end{itemize}
+
+\begin{definition}[STLC Types]
+\[
+  T \;::=\; o \;\mid\; T_1 \to T_2
+\]
+where $o$ ranges over base types and $T_1, T_2$ are recursively defined types.
+\end{definition}
+
+\subsection{The Typing Context}
+
+When type-checking a term, we need to know what types the free variables have.
+This information is stored in a \textbf{typing context}, written $\Gamma$
+(capital Greek gamma).
+
+\begin{definition}[Typing Context]
+A \textbf{typing context} $\Gamma$ is a finite list of variable-type pairs:
+\[
+  \Gamma \;=\; x_1 : T_1,\; x_2 : T_2,\; \ldots,\; x_n : T_n
+\]
+We write $x : T \in \Gamma$ to mean that the pair $x : T$ appears in
+$\Gamma$. The empty context is written $\emptyset$ or simply omitted.
+\end{definition}
+
+Think of the context as the \emph{environment}: it records what names are in
+scope and what types they have. In a C++ program, the context corresponds to
+the set of local variables declared before the current expression.
+
+\subsection{The Typing Judgment}
+
+The central notion in type theory is the \textbf{typing judgment}:
+\[
+  \Gamma \vdash e : T
+\]
+Read aloud: ``In context $\Gamma$, the expression $e$ has type $T$''. The
+symbol $\vdash$ is called the \emph{turnstile} and means ``proves'' or
+``entails.''
+
+\begin{keyinsight}[What the Typing Judgment Means]
+$\Gamma \vdash e : T$ does not mean that $e$ \emph{currently has} a value of
+type $T$. It means: \emph{assuming} the variables in $\Gamma$ have the types
+listed, \emph{then} $e$ will produce a value of type $T$. It is a guarantee
+about future behaviour, not a statement about a current value.
+\end{keyinsight}
+
+% ----------------------------------------------------------------
+\section{The Typing Rules of the STLC}
+% ----------------------------------------------------------------
+
+The typing judgment is defined by a set of \emph{inference rules}. Each rule
+has the form:
+\[
+  \frac{\text{premises}}{\text{conclusion}} \quad \text{(rule name)}
+\]
+If all the premises hold, then the conclusion holds. Rules with no premises
+are called \emph{axioms}. There are exactly three rules in the STLC.
+
+\subsection{The Variable Rule}
+
+\[
+  \frac{x : T \in \Gamma}{\Gamma \vdash x : T} \quad \text{(Var)}
+\]
+
+\textbf{Reading the rule:} If the context $\Gamma$ says that $x$ has type
+$T$ (i.e., the pair $x : T$ is listed in $\Gamma$), then we can conclude
+that $x$ has type $T$ in context $\Gamma$.
+
+\textbf{Intuition:} A variable's type is whatever we were told it is. If you
+declared $x$ as an \code{int}, then $x$ is an \code{int}. No computation is
+needed; the context already contains the answer.
+
+\begin{example}[Using the Variable Rule]
+Suppose $\Gamma = x : \Nat,\; y : \Bool$. Then:
+\[
+  \frac{x : \Nat \in \Gamma}{\Gamma \vdash x : \Nat} \quad\text{(Var)}
+\]
+This derivation has only one step. We look up $x$ in the context, find
+$x : \Nat$, and conclude $x$ has type $\Nat$.
+\end{example}
+
+\subsection{The Abstraction Rule}
+
+\[
+  \frac{\Gamma,\; x : A \;\vdash\; e : B}
+       {\Gamma \;\vdash\; (\lambda x : A.\; e) : A \to B}
+  \quad \text{(Abs)}
+\]
+
+\textbf{Reading the rule:} If, when we \emph{add} $x : A$ to our context,
+we can show that the body $e$ has type $B$, then the lambda abstraction
+$\lambda x : A.\; e$ has type $A \to B$ in the original context.
+
+\textbf{Intuition:} To type-check a function, assume the parameter has its
+declared type, then check what type the body has. The function's type is
+``input type $\to$ output type.'' This is exactly what a C++ compiler does
+when it type-checks a function definition: it puts the parameter into scope
+with the declared type, then checks the body.
+
+\begin{example}[Typing the Identity Function]
+We want to show $\emptyset \vdash (\lambda x : \Nat.\; x) : \Nat \to \Nat$.
+
+\[
+  \frac{
+    \dfrac{x : \Nat \in \{x : \Nat\}}{\{x : \Nat\} \vdash x : \Nat}
+    \;\text{(Var)}
+  }{
+    \emptyset \vdash (\lambda x : \Nat.\; x) : \Nat \to \Nat
+  }
+  \;\text{(Abs)}
+\]
+
+We first extend the empty context with $x : \Nat$, then use (Var) to conclude
+$x : \Nat$ in that extended context, then use (Abs) to conclude the lambda
+has type $\Nat \to \Nat$.
+\end{example}
+
+\subsection{The Application Rule}
+
+\[
+  \frac{
+    \Gamma \vdash e_1 : A \to B \qquad \Gamma \vdash e_2 : A
+  }{
+    \Gamma \vdash (e_1\; e_2) : B
+  }
+  \quad \text{(App)}
+\]
+
+\textbf{Reading the rule:} If $e_1$ is a function from $A$ to $B$, and $e_2$
+is an $A$, then applying $e_1$ to $e_2$ gives a $B$.
+
+\textbf{Intuition:} This is type-directed function calling. The argument must
+match the expected input type. The result has the output type. This is the
+most fundamental type-checking rule in programming languages.
+
+\begin{warning}[Type Mismatch at Application]
+The application rule requires that the argument type $A$ in $e_2 : A$ matches
+the input type $A$ in $e_1 : A \to B$ \emph{exactly}. If $e_1 : \Nat \to
+\Bool$ and $e_2 : \Bool$, the application is \emph{ill-typed}. This is the
+lambda-calculus version of the type error ``cannot convert \texttt{bool} to
+\texttt{int} in argument 1 of \texttt{f}''.
+\end{warning}
+
+\begin{example}[A Full Typing Derivation]
+Let us type-check the term $(\lambda f : \Nat \to \Nat.\; f\; f)\; (\lambda x
+: \Nat.\; x)$ --- wait, that is not typeable! The subterm $f\; f$ requires
+$f : \Nat \to \Nat$ to be applied to $f : \Nat \to \Nat$, but $\Nat \to \Nat
+\neq \Nat$. The application rule fails. This is the simply typed lambda
+calculus protecting us from self-application.
+
+Instead, let us type-check the well-formed term:
+apply a function to a numeral. Let $\Gamma = \emptyset$. We want to type
+$(\lambda f : \Nat \to \Nat.\; \lambda x : \Nat.\; f\; x)$.
+
+Step 1: We need to type the body $f\; x$ in context
+$\Gamma' = f : \Nat \to \Nat,\; x : \Nat$.
+\[
+  \frac{
+    \dfrac{f : \Nat \to \Nat \in \Gamma'}{\Gamma' \vdash f : \Nat \to \Nat}
+    \quad
+    \dfrac{x : \Nat \in \Gamma'}{\Gamma' \vdash x : \Nat}
+  }{
+    \Gamma' \vdash f\; x : \Nat
+  } \;\text{(App)}
+\]
+
+Step 2: Wrap in $\lambda x : \Nat$:
+\[
+  \frac{
+    \Gamma' \vdash f\; x : \Nat
+  }{
+    \{f : \Nat \to \Nat\} \vdash (\lambda x : \Nat.\; f\; x) : \Nat \to \Nat
+  } \;\text{(Abs)}
+\]
+
+Step 3: Wrap in $\lambda f : \Nat \to \Nat$:
+\[
+  \frac{
+    \{f : \Nat \to \Nat\} \vdash (\lambda x : \Nat.\; f\; x) : \Nat \to \Nat
+  }{
+    \emptyset \vdash (\lambda f : \Nat \to \Nat.\; \lambda x : \Nat.\; f\; x)
+    : (\Nat \to \Nat) \to \Nat \to \Nat
+  } \;\text{(Abs)}
+\]
+
+The final type $(\Nat \to \Nat) \to \Nat \to \Nat$ makes sense: this is a
+function that takes a function on naturals and returns a function on naturals.
+It is the \emph{function application operator}, known as \code{(\$)} in Haskell.
+\end{example}
+
+% ----------------------------------------------------------------
+\section{Currying and Uncurrying}
+% ----------------------------------------------------------------
+
+In the STLC, every function takes exactly one argument. How do we handle
+functions of multiple arguments, like $+$ which takes two naturals? The answer
+is a technique called \textbf{currying}, named after the logician Haskell
+Curry (who also gave his name to the Haskell programming language).
+
+\begin{definition}[Currying]
+\label{def:currying}
+\textbf{Currying} is the process of converting a function that takes a tuple
+of arguments into a sequence of functions each taking one argument:
+\[
+  \mathsf{curry} : (A \times B \to C) \to (A \to B \to C)
+\]
+\textbf{Uncurrying} is the reverse:
+\[
+  \mathsf{uncurry} : (A \to B \to C) \to (A \times B \to C)
+\]
+\end{definition}
+
+The key isomorphism is:
+\[
+  (A \times B \to C) \;\cong\; (A \to B \to C)
+\]
+
+This is a genuine isomorphism of types, with \textsf{curry} and
+\textsf{uncurry} as the two directions. We can always convert between the two
+styles without losing any information.
+
+\begin{keyinsight}[Why Currying Is So Natural]
+In the STLC, currying is not a trick --- it is the natural way things work.
+Since function types $A \to B$ are right-associative, $A \to B \to C$ already
+means $A \to (B \to C)$: a function returning a function. Multi-argument
+functions are just functions whose results happen to be functions.
+\end{keyinsight}
+
+\begin{example}[Curried Addition]
+The addition function on Church numerals was:
+\[
+  \mathsf{add} \;=\; \lambda m.\; \lambda n.\; \lambda f.\; \lambda x.\;
+  m\; f\; (n\; f\; x)
+\]
+This is already in curried form. Applied to one argument, it gives a
+function awaiting the second argument:
+\[
+  \mathsf{add}\; \mathsf{three} \;=\; \lambda n.\; \ldots
+\]
+This is the ``add 3 to any number'' function. Partial application --- applying
+a curried function to fewer arguments than it ultimately needs --- is one of
+the most powerful and expressive features of functional programming.
+\end{example}
+
+\begin{cppconnection}[Currying in C++]
+C++ does not curry functions automatically, but the tools are all there.
+Partial application can be achieved with \code{std::bind} or lambdas:
+
+\begin{lstlisting}[style=cpp]
+#include <functional>
+#include <iostream>
+
+// An ordinary two-argument function
+int add(int a, int b) { return a + b; }
+
+int main() {
+    // Curried version: a lambda returning a lambda
+    auto curried_add = [](int a) {
+        return [a](int b) {  // captures 'a' from outer scope
+            return a + b;
+        };
+    };
+
+    // Partial application: fix the first argument
+    auto add3 = curried_add(3);  // type: std::function<int(int)>
+    std::cout << add3(4) << "\n";   // prints 7
+    std::cout << add3(10) << "\n";  // prints 13
+
+    // Using std::bind for partial application
+    using namespace std::placeholders;
+    auto add5 = std::bind(add, 5, _1);
+    std::cout << add5(7) << "\n";   // prints 12
+
+    return 0;
+}
+\end{lstlisting}
+
+The lambda \code{[](int a)\{ return [a](int b)\{ return a+b; \}; \}} is
+the C++ rendering of $\lambda a : \mathsf{int}.\; \lambda b :
+\mathsf{int}.\; a + b$ --- a curried addition function. The inner lambda's
+capture of \code{a} is exactly the binding that the outer lambda introduced.
+\end{cppconnection}
+
+% ----------------------------------------------------------------
+\section{Higher-Order Functions}
+% ----------------------------------------------------------------
+
+A \textbf{higher-order function} is a function that either takes a function as
+an argument, or returns a function as a result (or both). In the lambda
+calculus, there is nothing special about higher-order functions --- since every
+value is a function, every function is trivially higher-order. But in typed
+languages, the type signature makes the structure explicit.
+
+\subsection{Map}
+
+The \textsf{map} function applies a transformation to every element of a
+collection:
+\[
+  \mathsf{map} : (A \to B) \to \mathsf{List}\; A \to \mathsf{List}\; B
+\]
+
+Its type tells the whole story: it takes a function from $A$ to $B$, a list
+of $A$s, and returns a list of $B$s. The function argument has type
+$A \to B$ --- it is itself a function type, so \textsf{map} is higher-order.
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <algorithm>
+#include <iostream>
+
+int main() {
+    std::vector<int> nums = {1, 2, 3, 4, 5};
+    std::vector<int> squares;
+    squares.reserve(nums.size());
+
+    // std::transform is C++'s map
+    // The lambda (int x){ return x*x; } is the A -> B function
+    std::transform(nums.begin(), nums.end(),
+                   std::back_inserter(squares),
+                   [](int x) { return x * x; });
+
+    // squares is now {1, 4, 9, 16, 25}
+    for (int s : squares) std::cout << s << " ";
+    std::cout << "\n";
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{Filter}
+
+The \textsf{filter} function selects elements satisfying a predicate:
+\[
+  \mathsf{filter} : (A \to \Bool) \to \mathsf{List}\; A \to \mathsf{List}\; A
+\]
+
+The predicate $A \to \Bool$ is again a function, making \textsf{filter}
+higher-order.
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <algorithm>
+#include <iostream>
+
+int main() {
+    std::vector<int> nums = {1, 2, 3, 4, 5, 6, 7, 8};
+    std::vector<int> evens;
+
+    // std::copy_if is C++'s filter
+    std::copy_if(nums.begin(), nums.end(),
+                 std::back_inserter(evens),
+                 [](int x) { return x % 2 == 0; });
+
+    // evens is now {2, 4, 6, 8}
+    for (int e : evens) std::cout << e << " ";
+    std::cout << "\n";
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{Fold (Reduce)}
+
+The \textsf{fold} function is the most general and most powerful. It
+collapses a list into a single value by repeatedly applying a binary
+function:
+\[
+  \mathsf{foldl} : (B \to A \to B) \to B \to \mathsf{List}\; A \to B
+\]
+Starting from an initial accumulator value of type $B$, \textsf{foldl}
+processes each element of type $A$, combining it with the current accumulator
+using the provided function.
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <numeric>
+#include <iostream>
+
+int main() {
+    std::vector<int> nums = {1, 2, 3, 4, 5};
+
+    // std::reduce / std::accumulate is C++'s fold
+    int sum = std::accumulate(nums.begin(), nums.end(), 0,
+                              [](int acc, int x) { return acc + x; });
+    std::cout << "Sum: " << sum << "\n";  // 15
+
+    int product = std::accumulate(nums.begin(), nums.end(), 1,
+                                  [](int acc, int x) { return acc * x; });
+    std::cout << "Product: " << product << "\n";  // 120
+
+    // Fold can express map and filter too!
+    // This is a deep theoretical point: fold is the "universal" combinator
+    // for lists.
+    return 0;
+}
+\end{lstlisting}
+
+\begin{keyinsight}[Fold Is Universal]
+The \textsf{fold} function (also called \textsf{reduce} or \textsf{catamorphism})
+is theoretically fundamental: \textsf{map} and \textsf{filter} can both be
+expressed in terms of \textsf{fold}. This mirrors the Church encoding idea ---
+a list, like a natural number, can be defined as its own eliminator. The type
+of \textsf{fold} for a list is essentially the type of the list's Church
+encoding.
+\end{keyinsight}
+
+\begin{cppconnection}[std::function and Higher-Order Types]
+C++'s \code{std::function<R(Args...)>} is the type of a callable that takes
+arguments of types \code{Args...} and returns \code{R}. In the STLC, this
+corresponds directly to a function type:
+\begin{center}
+\code{std::function<B(A)>} $\longleftrightarrow$ $A \to B$
+\end{center}
+
+\begin{lstlisting}[style=cpp]
+#include <functional>
+#include <vector>
+#include <iostream>
+
+// A higher-order function: takes an int->int function,
+// applies it twice.
+// Type in STLC: (int -> int) -> int -> int
+int apply_twice(std::function<int(int)> f, int x) {
+    return f(f(x));
+}
+
+int main() {
+    auto double_it = [](int x) { return x * 2; };
+    std::cout << apply_twice(double_it, 3) << "\n";  // 12
+
+    auto inc = [](int x) { return x + 1; };
+    std::cout << apply_twice(inc, 10) << "\n";        // 12
+    return 0;
+}
+\end{lstlisting}
+
+\code{apply\_twice} has the STLC type $(\mathsf{int} \to \mathsf{int}) \to
+\mathsf{int} \to \mathsf{int}$. It takes a function and an integer, and applies
+the function twice.
+\end{cppconnection}
+
+% ----------------------------------------------------------------
+\section{C++ Lambdas as Lambda Calculus}
+% ----------------------------------------------------------------
+
+We have been hinting at this connection throughout the chapter. Now let us
+state it precisely.
+
+\begin{keyinsight}[The Fundamental Correspondence]
+A C++ lambda expression \emph{is} a lambda abstraction in the STLC. The
+mapping is direct:
+\begin{center}
+\renewcommand{\arraystretch}{1.6}
+\begin{tabular}{lcl}
+  \textbf{Lambda Calculus} & $\longleftrightarrow$ & \textbf{C++} \\
+  \hline
+  $\lambda x : A.\; e$     & & \code{[](A x)\{ return e; \}} \\
+  Application $e_1\; e_2$  & & \code{f(arg)} \\
+  Variable $x$             & & local variable name \\
+  Type $A \to B$           & & \code{std::function<B(A)>} \\
+  Context $\Gamma$         & & enclosing scope (variables in scope) \\
+  Free variable in $e$     & & captured variable \\
+  Bound variable in $\lambda x.\; e$ & & parameter \code{x} \\
+\end{tabular}
+\end{center}
+\end{keyinsight}
+
+Let us make each row concrete.
+
+\paragraph{Abstraction and Application.}
+
+\begin{lstlisting}[style=cpp]
+// STLC: lambda x : int. x + 1
+auto inc = [](int x) { return x + 1; };
+
+// STLC: (lambda x : int. x + 1)  5
+//        ^^^^ abstraction ^^^^^  ^ application
+int result = inc(5);  // result = 6
+
+// Multi-argument: curried in STLC
+// lambda a : int. lambda b : int. a + b
+auto add = [](int a) {
+    return [a](int b) { return a + b; };
+};
+// Application: (lambda a. lambda b. a+b) 3 4
+int sum = add(3)(4);  // sum = 7
+\end{lstlisting}
+
+\paragraph{Nested Lambdas and Eta Reduction.}
+
+\begin{lstlisting}[style=cpp]
+int square(int x) { return x * x; }
+
+// This lambda is eta-expandable:
+auto f = [](int x) { return square(x); };
+
+// By eta-reduction, this is the same as:
+auto g = square;  // or: auto g = &square;
+
+// f and g are behaviourally identical.
+// The eta-reduced form g is simpler.
+\end{lstlisting}
+
+\paragraph{Beta Reduction in C++.}
+
+Every function call in C++ is a beta reduction. When you write
+\code{f(arg)}, the compiler substitutes \code{arg} for the parameter
+everywhere in \code{f}'s body. For lambdas called immediately (IILEs ---
+Immediately Invoked Lambda Expressions), this is particularly visible:
+
+\begin{lstlisting}[style=cpp]
+// STLC: (lambda x : int. x * x)  5 -->_beta  5 * 5 -->_beta  25
+int result = [](int x) { return x * x; }(5);
+//           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ lambda
+//                                          ^^^ argument
+// The compiler "beta-reduces" this at compile time if constexpr.
+
+constexpr int val = [](int x) { return x * x; }(5);
+// val == 25, computed at compile time.
+// This IS beta reduction, performed by the compiler.
+static_assert(val == 25);
+\end{lstlisting}
+
+% ----------------------------------------------------------------
+\section{Closures and Free Variables}
+% ----------------------------------------------------------------
+
+We defined free variables earlier: a variable in a lambda term that is not
+bound by any enclosing $\lambda$. In a pure lambda calculus term, free
+variables refer to the \emph{context} $\Gamma$ --- the external environment.
+In programming, when a function refers to a variable from an outer scope,
+that variable is \emph{captured} and the function becomes a \textbf{closure}.
+
+\begin{definition}[Closure]
+A \textbf{closure} is a function together with the environment that was in
+scope when the function was defined. The closure ``closes over'' its free
+variables by capturing the values (or references) of the variables it needs
+from the enclosing scope.
+\end{definition}
+
+\begin{example}[A Closure]
+\[
+  \lambda x : \Nat.\; (\lambda y : \Nat.\; x + y)
+\]
+In the inner term $\lambda y : \Nat.\; x + y$, the variable $x$ is free ---
+it is not bound by the inner $\lambda y$. It is bound by the outer $\lambda
+x$. When the outer function is called and $x$ is given a value, the inner
+function \emph{closes over} that value. The inner function is a closure.
+\end{example}
+
+\subsection{Closures in C++}
+
+C++ lambda captures are the direct realisation of closures. The capture list
+\code{[...]} specifies which free variables are captured and how.
+
+\begin{lstlisting}[style=cpp]
+#include <iostream>
+#include <functional>
+
+std::function<int(int)> make_adder(int n) {
+    // n is a free variable in the inner lambda.
+    // We capture it by value with [n].
+    // This corresponds to: lambda y. n + y
+    // where n is bound in the enclosing context.
+    return [n](int y) { return n + y; };
+}
+
+int main() {
+    auto add7  = make_adder(7);
+    auto add42 = make_adder(42);
+
+    std::cout << add7(3)   << "\n";  // 10
+    std::cout << add42(3)  << "\n";  // 45
+    std::cout << add7(add42(0)) << "\n";  // 49
+
+    return 0;
+}
+\end{lstlisting}
+
+Each call to \code{make\_adder} creates a fresh closure capturing a different
+value of \code{n}. The closures \code{add7} and \code{add42} are entirely
+separate, even though they were created from the same lambda expression.
+
+\subsection{Capture by Value vs.\ Capture by Reference}
+
+C++ offers two fundamental capture modes, which correspond to two different
+semantic choices when closing over free variables:
+
+\begin{lstlisting}[style=cpp]
+#include <iostream>
+
+int main() {
+    int counter = 0;
+
+    // Capture by VALUE [=]: the closure gets a COPY of counter
+    // at the time the lambda is created.
+    // In lambda calculus terms: substitute the current value.
+    auto by_val = [counter]() mutable {
+        ++counter;  // increments the COPY, not the original
+        return counter;
+    };
+
+    // Capture by REFERENCE [&]: the closure holds a REFERENCE
+    // to the original variable. Changes affect the original.
+    // In lambda calculus: a mutable cell / reference semantics.
+    auto by_ref = [&counter]() {
+        ++counter;  // increments the ORIGINAL counter
+        return counter;
+    };
+
+    std::cout << by_val() << "\n";  // 1 (copy goes from 0 to 1)
+    std::cout << counter  << "\n";  // 0 (original unchanged)
+
+    std::cout << by_ref() << "\n";  // 1 (original goes from 0 to 1)
+    std::cout << counter  << "\n";  // 1 (original changed!)
+
+    return 0;
+}
+\end{lstlisting}
+
+\begin{warning}[Dangling References in Closures]
+Capturing by reference (\code{[}\&\code{]}) is dangerous when the closure
+outlives the captured variable. If you return a lambda by reference-capture
+from a function, and the function's local variables are destroyed on return,
+the closure holds a dangling reference --- undefined behaviour.
+
+In the lambda calculus, this situation cannot arise because the calculus is
+purely functional (no mutation, no stack). The fact that C++ has mutable
+state and stack lifetimes means you must think carefully about capture mode.
+Prefer capture by value \code{[=]} unless you specifically need mutation of
+an outer variable, and even then, consider using \code{std::shared\_ptr} or
+\code{std::atomic} for shared mutable state.
+\end{warning}
+
+\begin{cppconnection}[Generalised Capture in C++14+]
+C++14 introduced \emph{init-captures}, which let you compute a value and
+capture it under a new name:
+
+\begin{lstlisting}[style=cpp]
+// Capture a moved unique_ptr (can't copy, so capture by value won't work)
+auto ptr = std::make_unique<int>(42);
+auto lambda = [p = std::move(ptr)]() {
+    return *p;
+};
+// ptr is now empty; lambda owns the resource.
+\end{lstlisting}
+
+Init-captures correspond to explicit substitution in the lambda calculus:
+you are specifying exactly what value goes into the closure's environment for
+each free variable.
+\end{cppconnection}
+
+% ----------------------------------------------------------------
+\section{Strong Normalization}
+% ----------------------------------------------------------------
+
+Now we come to one of the most important theorems in all of type theory.
+
+\begin{theorem}[Strong Normalization of the STLC]
+\label{thm:strong-norm}
+Every well-typed term of the Simply Typed Lambda Calculus is
+\textbf{strongly normalizing}: every reduction sequence starting from a
+well-typed term is finite, and terminates in a normal form.
+\end{theorem}
+
+Let us unpack what this means and why it is so remarkable.
+
+A \textbf{reduction sequence} is any sequence of beta reduction steps. A term
+is \textbf{weakly normalizing} if \emph{some} reduction sequence reaches a
+normal form. A term is \textbf{strongly normalizing} if \emph{every} reduction
+sequence reaches a normal form --- even if you pick the ``wrong'' order of
+reductions, you still terminate.
+
+\begin{keyinsight}[What Strong Normalization Means for Programmers]
+Strong normalization of the STLC means: \textbf{every well-typed STLC program
+terminates}. The type system is powerful enough to guarantee that no
+infinite loops exist. If your program compiles (type-checks), it will finish.
+
+This sounds amazing. Why don't we use STLC for real programming? Because STLC
+is not Turing-complete. You cannot write arbitrary recursive functions in STLC;
+in particular, you cannot define the $\Omega$ combinator or any general
+fixed-point operator. The price of guaranteed termination is the loss of
+Turing-completeness.
+\end{keyinsight}
+
+\subsection{Why STLC Cannot Be Turing-Complete}
+
+Turing-completeness requires the ability to write programs that run forever
+(not just programs that might run forever, but programs that can loop
+indefinitely on some inputs). Any Turing-complete language has this property.
+
+But Theorem~\ref{thm:strong-norm} says all STLC programs terminate. Therefore
+STLC is \emph{not} Turing-complete.
+
+This is not a flaw --- it is a \emph{feature} for certain applications. Proof
+assistants like Coq, Agda, and Lean use type systems that extend the STLC to
+be richer (they support dependent types, inductive types with structural
+recursion, etc.) while preserving normalization. The normalization property
+is what makes these systems consistent as logics.
+
+\subsection{Sketch of Why Strong Normalization Holds}
+
+The proof of strong normalization is non-trivial, but the intuition is
+accessible. The key insight is that function types $A \to B$ impose a
+\emph{strict decrease in type complexity} at every function application.
+
+Think of it this way: in $(\lambda x : A.\; e)\; a$, the function has type
+$A \to B$ and the argument has type $A$. The result has type $B$. The type
+$B$ is strictly \emph{simpler} (in terms of nesting of arrows) than $A \to B$.
+Every beta reduction step moves us to a smaller type. Since types are
+finite, this process must eventually stop.
+
+The formal proof uses a technique called \emph{logical relations} (also called
+the \emph{Tait reducibility candidates} method), invented by William Tait in
+1967. The idea is to define a predicate ``being reducible'' by induction on
+types, in a way that captures both termination and well-behavedness.
+
+\begin{example}[Type Complexity Decreases at Beta Reduction]
+Consider:
+\[
+  (\underbrace{\lambda f : (\Nat \to \Nat).\; f\; 0}_{(\Nat \to \Nat) \to \Nat})\;
+  (\underbrace{\lambda x : \Nat.\; x + 1}_{\Nat \to \Nat})
+\]
+
+The redex (the thing being reduced) has type $(\Nat \to \Nat) \to \Nat$.
+After one beta step:
+\[
+  (\lambda x : \Nat.\; x + 1)\; 0 \qquad :\; \Nat
+\]
+The redex now has type $\Nat \to \Nat$. After another step:
+\[
+  0 + 1 \;=\; 1 \qquad :\; \Nat
+\]
+The type went from $(\Nat \to \Nat) \to \Nat$, to $\Nat \to \Nat$, to
+$\Nat$ (a base type, no more reductions possible). The nesting depth of
+arrow types decreased at each step.
+\end{example}
+
+\subsection{The Trade-off: Termination vs.\ Expressiveness}
+
+We can summarize the situation in a table:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{lcc}
+\toprule
+\textbf{System}              & \textbf{Guaranteed Termination?} & \textbf{Turing-Complete?} \\
+\midrule
+Untyped $\lambda$-calculus   & No                               & Yes \\
+STLC                         & Yes                              & No  \\
+System F (poly.\ $\lambda$)  & Yes                              & No  \\
+Calculus of Constructions     & Yes                              & No  \\
+C++, Java, Python, \ldots    & No                               & Yes \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Practical programming languages sacrifice termination guarantees to gain
+Turing-completeness. This is the right trade-off for general-purpose
+computing. But for proof assistants and verified programs, termination is
+non-negotiable. The simply typed lambda calculus sits at the foundation of
+a long line of type systems that walk the line between expressiveness and
+logical soundness.
+
+% ----------------------------------------------------------------
+\section{Why Lambda Calculus Matters for C++}
+% ----------------------------------------------------------------
+
+You might wonder: I write C++, not lambda calculus. Why does any of this
+matter to me? The answer is: because the abstractions in modern C++ are
+directly shaped by these ideas.
+
+\subsection{Templates Are Type-Level Functions}
+
+C++ templates are functions at the \emph{type level}. A template
+\code{template <typename T> struct Wrapper \{\ldots\}} takes a type \code{T}
+and produces a new type \code{Wrapper<T>}. This is exactly a \emph{type-level
+lambda}: $\lambda T.\; \mathsf{Wrapper}\;T$.
+
+The \emph{template metaprogramming} community independently rediscovered
+large parts of the lambda calculus at the type level, because the need is
+so fundamental.
+
+\begin{lstlisting}[style=cpp]
+// A type-level function: takes a type T, produces pair<T,T>
+// In STLC notation: lambda T : Type. pair T T
+template <typename T>
+using DiagPair = std::pair<T, T>;
+
+DiagPair<int>    p1 = {1, 2};       // pair<int, int>
+DiagPair<double> p2 = {1.0, 2.0};  // pair<double, double>
+
+// A higher-order type-level function: takes a type constructor F
+// (a function from types to types) and applies it twice.
+// In STLC: lambda F : (Type -> Type). lambda T : Type. F (F T)
+template <template <typename> class F, typename T>
+using ApplyTwice = F<F<T>>;
+
+// ApplyTwice<std::vector, int> = std::vector<std::vector<int>>
+ApplyTwice<std::vector, int> nested = {{1, 2}, {3, 4}};
+\end{lstlisting}
+
+\subsection{Concepts Are Type Predicates}
+
+C++20 concepts are Boolean-valued type-level functions --- exactly the Church
+boolean idea applied to types. A concept \code{Sortable<T>} takes a type
+\code{T} and returns a compile-time boolean indicating whether \code{T}
+supports sorting.
+
+\begin{lstlisting}[style=cpp]
+// A type-level predicate: lambda T : Type. Bool
+// (returns true if T is an integral type)
+template <typename T>
+concept Integral = std::is_integral_v<T>;
+
+// A higher-order concept: a type is "has_size" if it has a .size() method
+template <typename T>
+concept HasSize = requires(T t) { { t.size() } -> std::convertible_to<std::size_t>; };
+
+// The typing rule for requires clauses is essentially the (App) rule:
+// if F has type (Type -> Constraint) and T has type Type,
+// then F<T> has type Constraint
+void print_size(HasSize auto const& container) {
+    std::cout << container.size() << "\n";
+}
+\end{lstlisting}
+
+\subsection{constexpr Functions Are Pure STLC Functions}
+
+A \code{constexpr} function in C++ must be a \emph{pure function}: given the
+same inputs, it always produces the same output, with no side effects.
+(Technically C++14+ relaxed this slightly, but in spirit, a well-written
+\code{constexpr} function is pure.) Pure functions are exactly the functions
+of the STLC.
+
+\begin{lstlisting}[style=cpp]
+// This constexpr function IS an STLC term:
+// Gamma |- factorial : Nat -> Nat
+constexpr long long factorial(int n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+// Evaluated at compile time --- this IS beta reduction performed
+// by the compiler. The compiler acts as an STLC interpreter.
+static_assert(factorial(10) == 3628800);
+static_assert(factorial(0)  == 1);
+\end{lstlisting}
+
+\begin{keyinsight}[The Compiler as a Lambda Calculus Interpreter]
+When the C++ compiler evaluates \code{constexpr} expressions, it is literally
+performing beta reduction on a subset of C++ that corresponds to the simply
+typed lambda calculus. This is not a metaphor: the formal semantics of
+\code{constexpr} evaluation in the C++ standard is defined in terms of
+a value-substitution model that is isomorphic to STLC evaluation.
+\end{keyinsight}
+
+\subsection{std::variant and Pattern Matching}
+
+Recall from the previous chapter that sum types (tagged unions,
+\code{std::variant}) are eliminators in the same way Church booleans are.
+The \code{std::visit} function applied to a variant is the typed version of
+the Church boolean \code{if}: it dispatches to different handlers based on
+which alternative is active. The typing rule for \code{std::visit} is exactly
+the application rule (App) of the STLC, applied to a visitor.
+
+% ----------------------------------------------------------------
+\section{A Worked Example: Building a Small Interpreter}
+% ----------------------------------------------------------------
+
+To tie everything together, let us build a tiny interpreter for a fragment of
+the STLC in C++. This will make the correspondence between the theory and the
+practice completely concrete.
+
+We represent types and terms as C++ data types:
+
+\begin{lstlisting}[style=cpp]
+#include <string>
+#include <memory>
+#include <variant>
+#include <unordered_map>
+#include <stdexcept>
+#include <iostream>
+
+// ---- TYPES ----
+
+struct BaseType { std::string name; };   // e.g. "Nat", "Bool"
+
+struct FuncType;  // forward declaration
+using Type = std::variant<BaseType, std::shared_ptr<FuncType>>;
+
+struct FuncType {
+    Type domain;    // A
+    Type codomain;  // B   (this is the type A -> B)
+};
+
+// ---- TERMS ----
+
+struct Var  { std::string name; };            // x
+struct Lam;                                    // lambda x : A . e
+struct App;                                    // e1 e2
+using Term = std::variant<Var,
+                           std::shared_ptr<Lam>,
+                           std::shared_ptr<App>>;
+
+struct Lam {
+    std::string param;   // x
+    Type        param_type; // A
+    Term        body;    // e
+};
+
+struct App {
+    Term func;  // e1
+    Term arg;   // e2
+};
+
+// ---- CONTEXT ----
+
+using Context = std::unordered_map<std::string, Type>;
+
+// ---- TYPE CHECKER ----
+// Returns the type of 'term' in context 'ctx', or throws on error.
+Type type_of(const Term& term, const Context& ctx) {
+    return std::visit([&](auto&& t) -> Type {
+        using T = std::decay_t<decltype(t)>;
+
+        if constexpr (std::is_same_v<T, Var>) {
+            // (Var) rule: look up in context
+            auto it = ctx.find(t.name);
+            if (it == ctx.end())
+                throw std::runtime_error("Unbound variable: " + t.name);
+            return it->second;  // return the type from the context
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Lam>>) {
+            // (Abs) rule: extend context, type-check body
+            Context ext_ctx = ctx;
+            ext_ctx[t->param] = t->param_type;  // Gamma, x : A
+            Type body_type = type_of(t->body, ext_ctx);
+            // Return A -> B
+            return std::make_shared<FuncType>(FuncType{t->param_type, body_type});
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<App>>) {
+            // (App) rule: check func has A -> B type, arg has A type
+            Type func_type = type_of(t->func, ctx);
+            Type arg_type  = type_of(t->arg,  ctx);
+
+            // func_type must be a FuncType
+            if (!std::holds_alternative<std::shared_ptr<FuncType>>(func_type))
+                throw std::runtime_error("Applied non-function!");
+
+            auto ft = std::get<std::shared_ptr<FuncType>>(func_type);
+            // Check domain matches (simplified: compare by structure here)
+            // In a real system, you'd implement structural type equality.
+            // For this demo, we trust the types.
+            return ft->codomain;  // return B
+        }
+    }, term);
+}
+\end{lstlisting}
+
+This is the STLC type checker in miniature. The three branches of the visitor
+correspond directly to the three inference rules: (Var), (Abs), and (App).
+The \code{Context} is the $\Gamma$; the \code{type\_of} function computes the
+derivation.
+
+The act of type-checking a term is called \emph{type inference} or \emph{type
+reconstruction} when the type annotations are omitted, and \emph{type
+checking} when they are present (as in the STLC, where every $\lambda$-bound
+variable carries its type). Hindley--Milner type inference (used in Haskell
+and ML) can reconstruct the annotations for you; we will study that in a
+later chapter.
+
+% ----------------------------------------------------------------
+\section{Summary and Looking Ahead}
+% ----------------------------------------------------------------
+
+This chapter has covered a lot of ground. Let us collect the key threads:
+
+\begin{enumerate}
+  \item The \textbf{untyped lambda calculus} gives us a minimal but
+        Turing-complete model of computation from just three syntactic forms:
+        variables, abstraction, and application.
+
+  \item \textbf{Church encodings} demonstrate that all data --- booleans,
+        natural numbers, pairs, lists --- can be represented as functions.
+        This is more than a curiosity: it reveals that data and computation
+        are intimately unified.
+
+  \item \textbf{Alpha, beta, and eta reduction} are the computational rules.
+        Beta reduction is function application; it is the fundamental step
+        of computation.
+
+  \item The \textbf{Simply Typed Lambda Calculus (STLC)} adds type
+        annotations, captured in the typing judgment $\Gamma \vdash e : T$.
+        The three typing rules --- (Var), (Abs), (App) --- are the foundation
+        of every type system in every modern programming language.
+
+  \item \textbf{Currying} shows that multi-argument functions reduce to
+        sequences of single-argument functions. The isomorphism
+        $(A \times B \to C) \cong (A \to B \to C)$ is one of the fundamental
+        structural facts of type theory.
+
+  \item \textbf{Higher-order functions} --- map, filter, fold --- are the
+        bread and butter of typed functional programming. In C++, they appear
+        as \code{std::transform}, \code{std::copy\_if}, and
+        \code{std::accumulate}.
+
+  \item \textbf{C++ lambdas} are lambda abstractions. The capture list is the
+        closure environment. Beta reduction is function calling. The
+        correspondence is not a metaphor; it is precise and formal.
+
+  \item \textbf{Closures} arise whenever a lambda term has free variables.
+        Capture-by-value corresponds to substitution semantics; capture-by-reference
+        corresponds to reference semantics in a mutable setting.
+
+  \item \textbf{Strong normalization} is the STLC's guarantee that every
+        well-typed program terminates. This comes at the cost of
+        Turing-completeness, but it is essential for type systems used in
+        proof assistants.
+\end{enumerate}
+
+In the next chapter, we extend the STLC with \textbf{polymorphism}: instead
+of writing separate identity functions for \code{int}, \code{double},
+\code{bool}, and so on, we write one polymorphic identity function
+$\lambda T : \Type.\; \lambda x : T.\; x$ that works for \emph{all} types
+at once. This is \textbf{System F}, and it is the theoretical foundation of
+C++ templates and Haskell's \code{forall}.
+
+% ----------------------------------------------------------------
+\section{Exercises}
+% ----------------------------------------------------------------
+
+\begin{exercise}
+Write the Church encoding of the pair type. That is, define:
+\[
+  \mathsf{pair} \;=\; \lambda a.\; \lambda b.\; \ldots
+\]
+such that $\mathsf{fst}\;(\mathsf{pair}\; a\; b) \to_\beta a$ and
+$\mathsf{snd}\;(\mathsf{pair}\; a\; b) \to_\beta b$. (Hint: a pair
+should be a function that takes a ``selector'' function and applies it to
+both components.)
+\end{exercise}
+
+\begin{exercise}
+Show all beta reduction steps for:
+\[
+  (\lambda x.\; \lambda y.\; \lambda z.\; x\; z\; (y\; z))\;
+  (\lambda a.\; \lambda b.\; a)\;
+  (\lambda c.\; c)
+\]
+This term is the S combinator applied to K and I. What is the result?
+\end{exercise}
+
+\begin{exercise}
+Write the typing derivation tree for the term:
+\[
+  \lambda f : A \to A.\; \lambda x : A.\; f\; (f\; x)
+\]
+What is the type of this term in the empty context?
+\end{exercise}
+
+\begin{exercise}
+In C++, implement the \code{compose} higher-order function:
+\[
+  \mathsf{compose} : (B \to C) \to (A \to B) \to A \to C
+\]
+Its definition is $\mathsf{compose}\; f\; g\; x = f\; (g\; x)$. Write it
+as a C++ lambda returning a lambda returning a lambda (fully curried). Use
+\code{std::function} for the types. Verify that
+\code{compose([](int x)\{return x*2;\}, [](int x)\{return x+1;\})(3)} gives
+8 (compute $2 \times (3 + 1) = 8$).
+\end{exercise}
+
+\begin{exercise}
+Explain why the following C++ code is problematic from the lambda calculus
+perspective:
+\begin{lstlisting}[style=cpp]
+auto make_counter() {
+    int count = 0;
+    return [&count]() { return ++count; };
+}
+auto c = make_counter();
+c();  // undefined behaviour
+\end{lstlisting}
+Relate your explanation to the concept of free variables and closures.
+\end{exercise}
+
+\begin{exercise}[Challenging]
+The \textbf{Y combinator} in the untyped lambda calculus is defined as:
+\[
+  Y = \lambda f.\; (\lambda x.\; f\; (x\; x))\; (\lambda x.\; f\; (x\; x))
+\]
+Verify that $Y\; g \to_\beta g\; (Y\; g)$ for any $g$. This means $Y$ is a
+\emph{fixed-point combinator}: $Y\; g$ is a fixed point of $g$. Now explain
+why the Y combinator cannot be typed in the STLC. (Hint: try to assign a type
+to the subterm $\lambda x.\; f\; (x\; x)$ and see what goes wrong with $x\;
+x$.)
+\end{exercise}
+
+\begin{exercise}
+Implement the \textsf{fold\_right} function for \code{std::vector<int>} using
+only lambdas and recursion (no explicit loops). Use it to implement
+\textsf{map} and \textsf{filter} in terms of \textsf{fold\_right}. This
+demonstrates that fold is the ``universal combinator'' for lists.
+\end{exercise}
+
+\bigskip
+
+\begin{takeaway}[Chapter 4 Takeaways]
+\begin{itemize}[leftmargin=1.5em]
+  \item The lambda calculus is the theoretical foundation of all of type
+        theory. It has exactly three constructs: variables, abstraction
+        ($\lambda x.\; e$), and application ($e_1\; e_2$).
+  \item Beta reduction ($(\lambda x.\; e)\; a \to e[x \mapsto a]$) is
+        function application. It is the fundamental step of computation.
+  \item Church encodings show that booleans, numbers, and all data types can
+        be encoded as functions. Data and computation are unified.
+  \item The typing judgment $\Gamma \vdash e : T$ means ``in context
+        $\Gamma$, term $e$ has type $T$.'' It is defined by three rules:
+        (Var), (Abs), and (App).
+  \item Currying converts multi-argument functions to chains of
+        single-argument functions: $(A \times B \to C) \cong (A \to B \to C)$.
+  \item C++ lambdas are lambda abstractions. Captures are the closure
+        environment. Function calls are beta reductions.
+  \item The Simply Typed Lambda Calculus is strongly normalizing: every
+        well-typed program terminates. This makes it foundational for proof
+        assistants but rules out Turing-completeness.
+  \item C++ templates, concepts, and \code{constexpr} functions are all
+        manifestations of lambda calculus ideas at the type level and
+        compile-time computation level.
+\end{itemize}
+\end{takeaway}

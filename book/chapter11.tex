@@ -1,0 +1,1786 @@
+﻿% ============================================================
+%  Chapter 11 ---'' Higher-Kinded Types and Type-Level Programming
+%  "Type Theory from the Ground Up"
+% ============================================================
+\chapter{Higher-Kinded Types and Type-Level Programming}
+\label{ch:higher-kinded}
+
+\begin{quote}
+\textit{``The programmer who has not been surprised by the realization that types
+themselves have types is a programmer who has not yet climbed high enough.''}
+\end{quote}
+
+\noindent
+We have spent the last several chapters climbing a ladder. At the bottom of the
+ladder are values: the ordinary data that programs compute with. \code{42},
+\code{true}, \code{"hello"}, \code{[1, 2, 3]}. At the next rung up are types:
+the classifications that organize values. \typename{int}, \typename{bool},
+\typename{std::string}, \typename{std::vector<int>}. You understand both of these
+rungs well by now.
+
+This chapter is about the discovery that the ladder does not stop there.
+
+\emph{Types themselves can be classified.} Just as a value lives inside a type, a
+type lives inside something called a \textbf{kind}. And once you see this, a whole
+new universe of abstraction opens up. You can write functions that take not just
+values as arguments, but entire \emph{type constructors}. You can write code that
+is polymorphic not just over types, but over \emph{families of types}. You can
+encode patterns like ``any container that can be mapped over'' without committing
+to whether the container is a list, a tree, an optional value, or something you
+have not invented yet.
+
+This is the world of \textbf{higher-kinded types} and \textbf{type-level
+programming}. It is the point where type theory starts to feel like a programming
+language in its own right --- a language where the data is types and the
+computation is type manipulation.
+
+The good news: the core ideas are surprisingly simple. The complexity mostly comes
+from unfamiliar notation and from the fact that most mainstream languages (C++
+included) support this indirectly or incompletely. Once you see the underlying
+pattern, you will start noticing it everywhere.
+
+Let us climb.
+
+% ============================================================
+\section{The Three-Level Hierarchy: Values, Types, and Kinds}
+\label{sec:three-levels}
+% ============================================================
+
+Start with what you know. In a typed programming language, every value has a type.
+We write this with the colon notation:
+
+\[
+42 : \mathtt{int}
+\]
+
+Read this as: ``42 inhabits the type \typename{int}.'' Or: ``the value 42 has type
+\typename{int}.'' The colon is the membership relation between the world of values
+and the world of types.
+
+Now, what if we apply the same question one level up? What does the type
+\typename{int} itself inhabit? What classifies types?
+
+The answer is: \textbf{kinds}. We write:
+
+\[
+\mathtt{int} : \ast
+\]
+
+where $\ast$ (pronounced ``star'', and sometimes written \code{Type} in modern
+systems) is the \textbf{kind of ordinary types} --- the kind of types that have
+values. Just as \typename{int} classifies 42, the kind $\ast$ classifies
+\typename{int}. Every type that you can have a value of belongs to the kind $\ast$.
+
+So we have three levels:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\textbf{Level} & \textbf{Example} & \textbf{Notation} & \textbf{``Classified by''} \\
+\midrule
+Value & \code{42} & $42 : \mathtt{int}$ & the type \typename{int} \\
+Type  & \typename{int} & $\mathtt{int} : \ast$ & the kind $\ast$ \\
+Kind  & $\ast$ & $\ast : \square$ & a sort (rarely discussed) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+For most purposes, we stop at kinds. The level above kinds (sometimes called
+\emph{sorts} or \emph{universes}) is a rabbit hole we will peek into briefly in
+Chapter~14, but for this chapter the hierarchy of values/types/kinds is enough.
+
+\begin{keyinsight}[{The Kind $\ast$ is the Kind of ``Complete'' Types}]
+The kind $\ast$ classifies types that are \emph{complete} --- types you can
+actually have a value of. \typename{int} is complete: you can write \code{int x =
+5}. \typename{bool} is complete. \typename{std::string} is complete. Even
+\typename{std::vector<int>} is complete: it has been given its argument and is
+fully determined.
+
+The kind $\ast$ contains all the types you use in everyday programming.
+\end{keyinsight}
+
+Now here is where things get interesting. Not every type-level entity has kind
+$\ast$. Consider \typename{std::vector} --- without an argument. Not
+\code{std::vector<int>}, not \code{std::vector<double>}, just the bare
+\typename{std::vector}.
+
+Is \typename{std::vector} a type? Not exactly --- you cannot have a value of type
+``\typename{std::vector}''. You must always say \emph{vector of what}. In other
+words, \typename{std::vector} is a \textbf{type constructor}: it takes a type as
+input and produces a type as output. It is a \emph{function at the type level}.
+
+What kind does \typename{std::vector} have?
+
+\[
+\mathtt{vector} : \ast \to \ast
+\]
+
+The kind $\ast \to \ast$ means: ``give me a type of kind $\ast$, and I will give
+you back a type of kind $\ast$.'' Feed in \typename{int} ($: \ast$), get out
+\typename{vector<int>} ($: \ast$). Feed in \typename{double}, get out
+\typename{vector<double>}. This is exactly like a function, but operating on types
+instead of values.
+
+More examples:
+
+\begin{align*}
+\mathtt{int}                   &: \ast                      \\
+\mathtt{bool}                  &: \ast                      \\
+\mathtt{vector}                &: \ast \to \ast             \\
+\mathtt{optional}              &: \ast \to \ast             \\
+\mathtt{unique\_ptr}           &: \ast \to \ast             \\
+\mathtt{pair}                  &: \ast \to \ast \to \ast    \\
+\mathtt{map}                   &: \ast \to \ast \to \ast    \\
+\mathtt{function}              &: \ast \to \ast \to \ast    \\
+\end{align*}
+
+Notice \typename{pair}: it takes \emph{two} type arguments. Its kind is
+$\ast \to \ast \to \ast$, which (just like curried functions at the value level)
+means it takes a type and returns a type constructor that still needs one more
+type. Feed it \typename{int} and you get \code{pair<int, ?>}, which has kind
+$\ast \to \ast$. Feed \emph{that} \typename{double} and you get
+\code{pair<int, double>}, which has kind $\ast$. The analogy to curried functions
+is exact.
+
+\begin{intuition}
+Kinds are to types as types are to values. The kind $\ast \to \ast$ classifies
+type constructors just as a function type $A \to B$ classifies value-level
+functions. The entire structure of the type system is repeated, one level up.
+\end{intuition}
+
+Let us draw the hierarchy visually, because seeing it laid out makes the pattern
+unmistakable.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.6cm and 2.8cm,
+  every node/.style={font=\small},
+  val/.style={draw, rounded corners, fill=blue!10, minimum width=2cm, minimum height=0.7cm, align=center},
+  typ/.style={draw, rounded corners, fill=green!10, minimum width=2cm, minimum height=0.7cm, align=center},
+  knd/.style={draw, rounded corners, fill=orange!10, minimum width=2cm, minimum height=0.7cm, align=center},
+  arr/.style={-{Stealth}, thick},
+]
+% Values
+\node[val] (v42)   {\code{42}};
+\node[val, right=of v42] (vtrue)  {\code{true}};
+\node[val, right=of vtrue] (vhello) {\code{"hello"}};
+\node[val, right=of vhello] (vvec)  {\code{[1,2,3]}};
+
+% Types
+\node[typ, above=of v42]   (tint)  {\typename{int}};
+\node[typ, above=of vtrue]  (tbool) {\typename{bool}};
+\node[typ, above=of vhello] (tstr)  {\typename{string}};
+\node[typ, above=of vvec]   (tvint) {\typename{vector<int>}};
+
+% Type constructors
+\node[knd, above=2.2cm of tstr] (tvec)  {\typename{vector}};
+\node[knd, right=of tvec]       (topt)  {\typename{optional}};
+\node[knd, left=2.5cm of tvec]  (tpair) {\typename{pair}};
+
+% Kinds
+\node[knd, above=2.2cm of tvec, xshift=-1.5cm] (kstar)     {$\ast$};
+\node[knd, right=2.2cm of kstar]                (kstarstar) {$\ast \to \ast$};
+\node[knd, right=2.2cm of kstarstar]            (kss)       {$\ast \to \ast \to \ast$};
+
+% Arrows: values -> types
+\draw[arr] (v42)   -- (tint);
+\draw[arr] (vtrue)  -- (tbool);
+\draw[arr] (vhello) -- (tstr);
+\draw[arr] (vvec)   -- (tvint);
+
+% Arrows: concrete types -> kind *
+\draw[arr] (tint)  -- (kstar);
+\draw[arr] (tbool) -- (kstar);
+\draw[arr] (tvint) -- (kstar);
+\draw[arr] (tstr)  -- (kstar);
+
+% Arrows: type constructors -> kinds
+\draw[arr] (tvec)  -- (kstarstar);
+\draw[arr] (topt)  -- (kstarstar);
+\draw[arr] (tpair) -- (kss);
+
+% Labels
+\node[left=0.3cm of v42,  font=\bfseries\small] {Values:};
+\node[left=0.3cm of tint, font=\bfseries\small] {Types:};
+\node[left=0.3cm of kstar, font=\bfseries\small] {Kinds:};
+\end{tikzpicture}
+\end{center}
+
+The arrow from a value to a type means ``this value inhabits this type.'' The
+arrow from a type to a kind means ``this type has this kind.'' Everything is
+classified by something at the level above it.
+
+\begin{cppconnection}[Kinds in C++: Implicitly There]
+C++ does not give you a syntax to write kinds directly --- you cannot write
+\code{vector : * -> *} in C++. But the concept is very much present. When you
+write a template that takes a \emph{type parameter}, the compiler implicitly
+expects that parameter to have kind $\ast$:
+
+\begin{lstlisting}[style=cpp]
+template<typename T>       // T must have kind *
+void print(T const& val);  // T must be a complete type -- you can have a T
+
+// This is fine:
+print(42);          // T = int, kind *
+print(std::string{"hello"}); // T = std::string, kind *
+
+// But you cannot do this -- vector is a type constructor, kind * -> *:
+// print<std::vector>(??);  // Makes no sense -- vector needs an argument
+\end{lstlisting}
+
+When you need to accept a type constructor (kind $\ast \to \ast$) as a template
+argument, you use \textbf{template template parameters} --- and that is exactly
+what we will explore in Section~\ref{sec:template-template}.
+\end{cppconnection}
+
+% ============================================================
+\section{What Is a Kind? A Formal Look}
+\label{sec:what-is-a-kind}
+% ============================================================
+
+Let us be precise. Kinds are defined by a simple grammar. In the most basic
+kind system, there are exactly two forms:
+
+\[
+\kappa ::= \ast \mid \kappa_1 \to \kappa_2
+\]
+
+That is: a kind is either $\ast$ (the base kind of complete types) or a function
+from one kind to another ($\kappa_1 \to \kappa_2$). This is exactly parallel to
+how simple types are built: a type is either a base type (\typename{int},
+\typename{bool}, \ldots) or a function type ($A \to B$). Kinds are simple types,
+just one level up.
+
+\begin{definition}
+A \textbf{kind} is a classifier for type-level entities. The grammar of kinds is:
+\[
+\kappa ::= \ast \mid \kappa_1 \to \kappa_2
+\]
+where $\ast$ is the kind of \emph{proper types} (types with values) and
+$\kappa_1 \to \kappa_2$ is the kind of type constructors that take a type of kind
+$\kappa_1$ and produce a type of kind $\kappa_2$.
+
+A \textbf{type constructor} is any type-level entity with kind other than $\ast$.
+\end{definition}
+
+\begin{example}[Determining Kinds]
+Let us work out the kinds of some familiar entities step by step.
+
+\textbf{\typename{int}}: A complete type. You can write \code{int x = 5}. Kind: $\ast$.
+
+\textbf{\typename{vector}}: Takes one type argument. \code{vector<int>} has kind
+$\ast$, so \typename{vector} has kind $\ast \to \ast$.
+
+\textbf{\typename{pair}}: Takes two type arguments. Step by step:
+\code{pair<int, double>} has kind $\ast$. So \code{pair<int, ?>} has kind
+$\ast \to \ast$. So \code{pair} has kind $\ast \to (\ast \to \ast)$, which by
+convention is written $\ast \to \ast \to \ast$ (right-associative, just like
+function types at the value level).
+
+\textbf{A hypothetical \code{Transformer}}: Suppose you have a type that wraps a
+type constructor --- like \code{Transformer<vector>} or
+\code{Transformer<optional>}. Then \code{Transformer} takes something of kind
+$\ast \to \ast$ and produces something of kind $\ast$. Its kind is:
+$(\ast \to \ast) \to \ast$.
+
+This last example is a \textbf{higher-kinded type}: its kind has an arrow in the
+domain, meaning it takes another type constructor as input. This is the key new
+idea.
+\end{example}
+
+\begin{keyinsight}[Higher-Kinded = Kinds with Arrows on the Left]
+An entity is \textbf{higher-kinded} if its kind has an arrow in the input
+position. That is, if it takes a type constructor --- not just a simple type ---
+as an argument.
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Kind} & \textbf{Takes what?} & \textbf{Higher-kinded?} \\
+\midrule
+$\ast$ & nothing (it's a complete type) & No \\
+$\ast \to \ast$ & a simple type & No \\
+$\ast \to \ast \to \ast$ & two simple types & No \\
+$(\ast \to \ast) \to \ast$ & a type constructor & \textbf{Yes} \\
+$(\ast \to \ast) \to \ast \to \ast$ & a type constructor and a type & \textbf{Yes} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The key distinguishing feature: the argument kind itself has an arrow in it.
+\end{keyinsight}
+
+% ============================================================
+\section{Higher-Kinded Types: Types that Take Type Constructors}
+\label{sec:hkt}
+% ============================================================
+
+Now we arrive at the central concept. A \textbf{higher-kinded type} (HKT) is a
+type constructor whose kind involves another type constructor as an argument. In
+other words, it is a type-level function that takes a type-level function as
+input.
+
+This might sound abstract, so let us build toward it from a concrete problem.
+
+\subsection{The Motivation: Abstracting Over Containers}
+
+Suppose you want to write a single function that doubles every element in a
+container --- it should work on \code{std::vector<int>}, \code{std::list<int>},
+\code{std::optional<int>}, and any other container you might dream up later.
+
+In C++, you might try:
+
+\begin{lstlisting}[style=cpp]
+// Works for vector -- but only vector
+std::vector<int> double_all(std::vector<int> v) {
+    std::vector<int> result;
+    for (int x : v) result.push_back(x * 2);
+    return result;
+}
+
+// Works for optional -- but only optional
+std::optional<int> double_all(std::optional<int> opt) {
+    if (opt) return *opt * 2;
+    return std::nullopt;
+}
+\end{lstlisting}
+
+This is code duplication. The logic is identical: apply a function to each element
+inside a container, collecting the results in the same kind of container. Can we
+abstract over the container?
+
+The obstacle: to abstract over ``the kind of container'', we need to be able to
+say ``give me any type constructor $F$ of kind $\ast \to \ast$''. The
+type constructor is the parameter. That is exactly a higher-kinded type.
+
+In Haskell (which has explicit support for this), you write:
+
+\begin{lstlisting}[style=haskell]
+-- fmap works for ANY type constructor F that is a Functor
+-- F has kind * -> *
+fmap :: Functor f => (a -> b) -> f a -> f b
+--                              ^^^   ^^^
+--              f applied to a        f applied to b
+--              f is the type constructor being abstracted over
+\end{lstlisting}
+
+Here \code{f} is a type variable of kind $\ast \to \ast$. This is the
+higher-kinded variable. \code{f a} means ``apply the type constructor \code{f} to
+the type \code{a}'', producing a complete type of kind $\ast$. The constraint
+\code{Functor f} says that \code{f} must be a functor --- a term we will define
+carefully in the next section.
+
+The key insight: \code{f} ranges over type constructors, not types. When we say
+\code{f = []} (lists), we get \code{fmap :: (a -> b) -> [a] -> [b]}. When
+\code{f = Maybe}, we get \code{fmap :: (a -> b) -> Maybe a -> Maybe b}. The
+\emph{same function}, behaving correctly for completely different containers.
+
+\begin{warning}[C++ Does Not Have Native HKT Syntax]
+C++ does not allow you to write a template parameter of kind $\ast \to \ast$
+directly. You cannot say \code{template<template<typename> F>} and then use
+\code{F} as a type constructor in a return type in all the ways Haskell can. The
+reasons are historical and practical, but the consequence is that C++ simulates
+HKTs via several workarounds, which we will explore in
+Section~\ref{sec:template-template}. Other languages like Scala, Haskell, Kotlin
+(partially), and Rust (partially via associated types) have more direct support.
+\end{warning}
+
+% ============================================================
+\section{Functors: The Most Important Higher-Kinded Abstraction}
+\label{sec:functors}
+% ============================================================
+
+Of all the higher-kinded abstractions, \textbf{Functor} is the one you need to
+understand first. It is simple, ubiquitous, and the foundation for everything
+else.
+
+\begin{definition}
+A \textbf{Functor} is a type constructor $F : \ast \to \ast$ equipped with an
+operation
+\[
+\mathsf{fmap} : (A \to B) \to F(A) \to F(B)
+\]
+that satisfies two laws:
+\begin{enumerate}
+  \item \textbf{Identity law}: $\mathsf{fmap}(\mathsf{id}) = \mathsf{id}$. Mapping
+  the identity function does nothing.
+  \item \textbf{Composition law}: $\mathsf{fmap}(g \circ f) = \mathsf{fmap}(g)
+  \circ \mathsf{fmap}(f)$. Mapping a composed function is the same as mapping
+  each function in sequence.
+\end{enumerate}
+\end{definition}
+
+What does this mean in plain English? A Functor is a container (or context) that
+knows how to apply a function to its contents, producing a new container of the
+same shape. The function \emph{transforms the elements}; the container
+\emph{structure is preserved}.
+
+The type signature says it all: given a function from $A$ to $B$, and a container
+full of $A$s, produce a container full of $B$s. The container's structure --- its
+length, its shape, whether it is empty --- does not change. Only the elements
+change.
+
+\subsection{Examples of Functors}
+
+\textbf{Lists/Vectors}: The obvious example. \code{fmap} applies a function to
+every element.
+
+\begin{lstlisting}[style=haskell]
+-- In Haskell ([] is the list type constructor)
+fmap (*2) [1, 2, 3, 4]  -- => [2, 4, 6, 8]
+fmap show [1, 2, 3]      -- => ["1", "2", "3"]
+fmap (+1) []             -- => []
+\end{lstlisting}
+
+In C++, the closest thing is \code{std::transform}:
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <algorithm>
+#include <string>
+
+std::vector<int>    xs = {1, 2, 3, 4};
+std::vector<int>    doubled(xs.size());
+std::vector<std::string> stringified(xs.size());
+
+// fmap (*2) xs
+std::transform(xs.begin(), xs.end(), doubled.begin(),
+               [](int x) { return x * 2; });
+// doubled == {2, 4, 6, 8}
+
+// fmap show xs (approximately)
+std::transform(xs.begin(), xs.end(), stringified.begin(),
+               [](int x) { return std::to_string(x); });
+// stringified == {"1", "2", "3", "4"}
+\end{lstlisting}
+
+\textbf{Optional/Maybe}: The optional value is either empty or contains one
+element. Mapping over an empty optional gives an empty optional. Mapping over a
+non-empty optional applies the function to the value inside.
+
+\begin{lstlisting}[style=haskell]
+-- Maybe is Haskell's optional
+fmap (*2) (Just 5)  -- => Just 10
+fmap (*2) Nothing   -- => Nothing
+\end{lstlisting}
+
+\begin{lstlisting}[style=cpp]
+// C++23 std::optional finally gets transform (its fmap)
+std::optional<int> x = 5;
+std::optional<int> y = std::nullopt;
+
+auto doubled_x = x.transform([](int v) { return v * 2; });
+// => std::optional<int>{10}
+
+auto doubled_y = y.transform([](int v) { return v * 2; });
+// => std::optional<int>{} (empty)
+\end{lstlisting}
+
+Before C++23, you had to write this by hand, which illustrates exactly the
+pattern:
+
+\begin{lstlisting}[style=cpp]
+template<typename A, typename B>
+std::optional<B> fmap(std::function<B(A)> f, std::optional<A> opt) {
+    if (opt.has_value()) {
+        return std::optional<B>{ f(*opt) };
+    }
+    return std::nullopt;
+}
+\end{lstlisting}
+
+\textbf{Trees}: A binary tree is a functor. Map a function over a tree and you get
+a new tree of the same shape, with every value transformed.
+
+\begin{lstlisting}[style=haskell]
+data Tree a = Leaf | Node (Tree a) a (Tree a)
+
+instance Functor Tree where
+    fmap _ Leaf         = Leaf
+    fmap f (Node l x r) = Node (fmap f l) (f x) (fmap f r)
+\end{lstlisting}
+
+\textbf{Functions}: Remarkably, even functions are functors! For a fixed input
+type $R$, the type constructor \code{(R ->)} is a functor. Mapping over a function
+\code{g :: R -> A} with a function \code{f :: A -> B} gives you \code{f . g :: R
+-> B}. This is just function composition. The functor instance for functions is
+literally function composition.
+
+\textbf{The Identity Functor}: The simplest possible functor. \code{Identity a}
+is just a wrapper around \code{a}. Mapping applies the function to the wrapped
+value. Not very exciting on its own, but crucial in category theory and in the
+theory of monad transformers.
+
+\subsection{Verifying the Functor Laws}
+
+The laws are not decoration. They ensure that the Functor behaves sanely. Let us
+verify them for \code{std::optional}:
+
+\textbf{Identity}: \code{fmap(id)(opt) == opt}. If \code{opt} is empty, we get
+empty. If \code{opt} is \code{Just x}, we get \code{Just (id x) = Just x}. The
+value is unchanged. \checkmark
+
+\textbf{Composition}: \code{fmap(g . f)(opt) == (fmap(g) . fmap(f))(opt)}.
+If \code{opt} is empty, both sides give empty. If \code{opt} is \code{Just x},
+the left side gives \code{Just ((g . f) x) = Just (g (f x))}. The right side
+gives \code{fmap(g)(Just (f x)) = Just (g (f x))}. Equal. \checkmark
+
+\begin{keyinsight}[Why the Functor Laws Matter]
+The functor laws guarantee that \code{fmap} is a \emph{structure-preserving}
+operation. Without them, a type could claim to be a Functor but behave
+bizarrely --- perhaps shuffling elements, or adding extra ones. The laws ensure
+that the container's shape is faithfully preserved and that mapping is
+compositional. They are what make the abstraction \emph{trustworthy}.
+\end{keyinsight}
+
+\subsection{What is NOT a Functor}
+
+Not every type constructor is a functor. A type constructor \code{F} is \emph{not}
+a functor if you cannot define a law-abiding \code{fmap} for it.
+
+Consider \code{Predicate a = a -> Bool}. This type constructor takes a type
+argument \code{a}. Can you map a function \code{f :: A -> B} over a
+\code{Predicate A} to get a \code{Predicate B}? You would need to go from
+\code{A -> Bool} to \code{B -> Bool}. But \code{f} goes \emph{forward} (from
+\code{A} to \code{B}), and you need to go \emph{backward} (from \code{B} to
+get an \code{A} to feed to the predicate). \code{Predicate} is not a Functor in
+the ordinary sense; it is a \textbf{contravariant functor} (it maps functions in
+the opposite direction). This is related to the discussion of variance from
+previous chapters, and it connects deeply to the covariance/contravariance
+machinery in C++ and Java.
+
+% ============================================================
+\section{Applicative Functors: Functions Inside Contexts}
+\label{sec:applicative}
+% ============================================================
+
+Functor lets us apply a plain function to a value inside a context:
+
+\[
+\mathsf{fmap} : (A \to B) \to F(A) \to F(B)
+\]
+
+But what if the \emph{function itself} is inside a context? What if we have an
+$F(A \to B)$ and an $F(A)$ and we want an $F(B)$? This is what
+\textbf{Applicative Functors} provide.
+
+\begin{definition}
+An \textbf{Applicative Functor} is a type constructor $F : \ast \to \ast$ with:
+\begin{itemize}
+  \item \textbf{pure}: $A \to F(A)$ --- wrap a plain value in the context.
+  \item \textbf{apply} ($\mathbin{\langle*\rangle}$): $F(A \to B) \to F(A) \to
+  F(B)$ --- apply a function-in-context to a value-in-context.
+\end{itemize}
+Every Applicative is a Functor (you can define \code{fmap} in terms of
+\code{pure} and \code{apply}). Every Monad is an Applicative.
+\end{definition}
+
+The intuition: Applicative lets you work with \emph{multiple independent
+effectful values} and combine them. With just Functor, you can apply one function
+to one container. With Applicative, you can apply functions and arguments that
+are \emph{both} inside contexts.
+
+\begin{lstlisting}[style=haskell]
+-- Applicative for Maybe:
+pure 5             :: Maybe Int    -- => Just 5
+Just (+3) <*> Just 5              -- => Just 8
+Just (+3) <*> Nothing             -- => Nothing
+Nothing   <*> Just 5              -- => Nothing
+
+-- Applicative for lists (combines every pair):
+[(+1), (*2)] <*> [10, 20]         -- => [11, 21, 20, 40]
+-- Every function applied to every argument
+\end{lstlisting}
+
+The list applicative is particularly interesting: it computes the Cartesian
+product of functions and arguments. This gives you concise notation for
+combinatorial computations.
+
+Where does Applicative fit in the hierarchy? Think of it as sitting between
+Functor and Monad:
+
+\[
+\text{Functor} \subset \text{Applicative} \subset \text{Monad}
+\]
+
+Every Monad is an Applicative, and every Applicative is a Functor. Each step up
+adds more power --- but also more structure and more obligation.
+
+\begin{cppconnection}[Applicative in C++: std::expected and Ranges]
+C++23's \code{std::expected<T, E>} (the Result type) gets \code{and\_then} and
+\code{transform} methods. While C++ does not have a general Applicative typeclass,
+these methods follow the same pattern:
+
+\begin{lstlisting}[style=cpp]
+#include <expected>
+#include <string>
+
+std::expected<int, std::string> parse_int(std::string s) {
+    try { return std::stoi(s); }
+    catch (...) { return std::unexpected{"not a number: " + s}; }
+}
+
+// Chaining: applicative-style error handling
+auto result = parse_int("42")
+    .transform([](int x) { return x * 2; })  // fmap
+    .and_then([](int x) -> std::expected<int, std::string> {
+        if (x > 100) return std::unexpected{"too large"};
+        return x;
+    });
+// result is std::expected<int, std::string>{84}
+\end{lstlisting}
+\end{cppconnection}
+
+% ============================================================
+\section{Monads Demystified}
+\label{sec:monads}
+% ============================================================
+
+Monads have a reputation for being mysterious and difficult. This reputation is
+partly earned --- the full categorical definition is genuinely abstract --- and
+partly unearned, because the practical programming idea is quite concrete. Let us
+demystify them.
+
+Start with the problem that motivates monads. With Functor, you can apply a
+function $A \to B$ to an $F(A)$ to get an $F(B)$. But what if your function does
+not produce a plain $B$, but rather an $F(B)$? That is, what if you have
+a function $A \to F(B)$ and you want to chain it onto an $F(A)$?
+
+Naively applying \code{fmap} would give you $F(F(B))$ --- a doubly-nested
+container. You need a way to \emph{flatten} this. That flattening operation,
+together with a way to wrap values, is what a Monad provides.
+
+\begin{definition}
+A \textbf{Monad} is a type constructor $M : \ast \to \ast$ equipped with:
+\begin{itemize}
+  \item \textbf{return} (or \textbf{pure}): $A \to M(A)$ --- wrap a value in the
+  context.
+  \item \textbf{bind} (written $\mathbin{>\!\!>\!\!=}$ in Haskell, or
+  \textbf{flatMap} in Scala): $M(A) \to (A \to M(B)) \to M(B)$ --- extract a
+  value from the context, pass it to a function that produces a new context, and
+  return the result.
+\end{itemize}
+The monad laws (left identity, right identity, associativity) ensure that chaining
+behaves consistently.
+\end{definition}
+
+The bind operation is the key. It threads a value out of a context, lets a
+function work with it (producing a new context), and glues the result together.
+It is a controlled way of chaining \emph{context-aware computations}.
+
+\begin{keyinsight}[The Intuition for Monads]
+A Monad is a design pattern for chaining operations that each have some additional
+``context'' or ``effect'':
+\begin{itemize}
+  \item The context might be: \emph{this computation might fail} (Maybe/optional).
+  \item The context might be: \emph{this computation produces multiple results} (List).
+  \item The context might be: \emph{this computation reads from an environment} (Reader).
+  \item The context might be: \emph{this computation performs I/O} (IO in Haskell).
+  \item The context might be: \emph{this computation carries state} (State).
+\end{itemize}
+The Monad interface gives you a uniform way to chain such operations, regardless
+of what the context actually is. You write code as if you have plain values; the
+monad handles the context threading for you.
+\end{keyinsight}
+
+\subsection{The Maybe Monad: Chaining Failure}
+
+The Maybe (optional) monad is the simplest and clearest illustration. Suppose you
+have a series of operations, each of which might fail:
+
+\begin{lstlisting}[style=haskell]
+-- Each function might return Nothing if something goes wrong
+lookupUser    :: UserId -> Maybe User
+getUserEmail  :: User   -> Maybe Email
+sendEmail     :: Email  -> Maybe Receipt
+
+-- Without monads: explicit case checking at every step
+processUser :: UserId -> Maybe Receipt
+processUser uid =
+    case lookupUser uid of
+        Nothing   -> Nothing
+        Just user ->
+            case getUserEmail user of
+                Nothing    -> Nothing
+                Just email ->
+                    case sendEmail email of
+                        Nothing      -> Nothing
+                        Just receipt -> Just receipt
+
+-- WITH the Maybe monad: bind chains the checks automatically
+processUser :: UserId -> Maybe Receipt
+processUser uid = lookupUser uid >>= getUserEmail >>= sendEmail
+-- If ANY step returns Nothing, the whole chain short-circuits to Nothing
+\end{lstlisting}
+
+The \code{>>=} operator (bind) takes the result of the left side and threads it
+into the right side. If the left side is \code{Nothing}, it short-circuits and
+the right side is never called. This is the ``context'' that the Maybe monad
+carries: the possibility of failure.
+
+In C++, \code{std::optional::and\_then} (C++23) is exactly this:
+
+\begin{lstlisting}[style=cpp]
+#include <optional>
+#include <string>
+
+struct User  { std::string name; std::string email; };
+struct Email { std::string address; };
+
+std::optional<User>  lookup_user(int id);
+std::optional<Email> get_email(User const& u);
+std::optional<bool>  send_email(Email const& e);
+
+// Monadic chain using and_then (bind for optional):
+std::optional<bool> process_user(int id) {
+    return lookup_user(id)
+        .and_then(get_email)
+        .and_then(send_email);
+    // Short-circuits to nullopt if any step fails
+}
+\end{lstlisting}
+
+No explicit null checks. No nested ifs. The ``might fail'' context is handled
+automatically by \code{and\_then}.
+
+\subsection{The List Monad: Chaining Non-Determinism}
+
+The List monad interprets the context as \emph{non-determinism}: a computation
+that might have multiple results. Bind means ``try every possibility''.
+
+\begin{lstlisting}[style=haskell]
+-- Generate all possible knight moves from a position
+type KnightPos = (Int, Int)
+
+moveKnight :: KnightPos -> [KnightPos]
+moveKnight (c, r) = filter onBoard
+    [ (c+2, r-1), (c+2, r+1), (c-2, r-1), (c-2, r+1)
+    , (c+1, r-2), (c+1, r+2), (c-1, r-2), (c-1, r+2)
+    ]
+  where onBoard (c', r') = c' `elem` [1..8] && r' `elem` [1..8]
+
+-- All squares reachable in exactly 3 knight moves:
+in3 :: KnightPos -> [KnightPos]
+in3 start = return start >>= moveKnight >>= moveKnight >>= moveKnight
+-- This automatically tries all paths!
+-- The list monad handles the branching and collecting
+\end{lstlisting}
+
+The bind for lists takes each element of the list, applies the function (which
+itself returns a list), and concatenates all the results. It is \code{concatMap}.
+The list monad is essentially a built-in depth-first search over all possibilities.
+
+\subsection{The Result/Expected Monad: Chaining Errors with Information}
+
+Maybe loses information: it just tells you ``something went wrong''. The
+Result/Expected type (also called Either in Haskell) carries an error value along
+with the failure:
+
+\begin{lstlisting}[style=haskell]
+-- Either e a: either Left e (failure with error e) or Right a (success)
+parseAge    :: String -> Either String Int    -- Left "not a number", or Right age
+validateAge :: Int    -> Either String Int    -- Left "must be 18+", or Right age
+lookupPlan  :: Int    -> Either String Plan   -- Left "no plan for age", or Right plan
+
+-- Chain with >>=; Left short-circuits, carrying the error
+getInsurancePlan :: String -> Either String Plan
+getInsurancePlan input =
+    parseAge input >>= validateAge >>= lookupPlan
+\end{lstlisting}
+
+\begin{lstlisting}[style=cpp]
+// C++23 std::expected is the Result monad
+#include <expected>
+
+std::expected<int, std::string> parse_age(std::string s);
+std::expected<int, std::string> validate_age(int age);
+std::expected<Plan, std::string> lookup_plan(int age);
+
+std::expected<Plan, std::string> get_insurance_plan(std::string input) {
+    return parse_age(input)
+        .and_then(validate_age)
+        .and_then(lookup_plan);
+    // Errors propagate automatically, carrying the error message
+}
+\end{lstlisting}
+
+\subsection{The Monad Laws}
+
+Like Functor, Monad has laws that make the abstraction trustworthy.
+
+Let \code{return} wrap a value and \code{>>=} be bind:
+
+\begin{enumerate}
+  \item \textbf{Left identity}: \code{return a >>= f == f a}. Wrapping a value
+  and immediately binding is the same as just applying the function.
+  \item \textbf{Right identity}: \code{m >>= return == m}. Binding with
+  \code{return} does nothing --- it is the neutral element.
+  \item \textbf{Associativity}: \code{(m >>= f) >>= g == m >>= (\textbackslash x
+  -> f x >>= g)}. Chaining is associative --- grouping does not matter.
+\end{enumerate}
+
+The associativity law is the most important: it means you can chain an arbitrary
+sequence of monadic operations and the result is well-defined, regardless of how
+you group them. This is what makes monadic chains composable.
+
+\begin{warning}[Monads Are Not Magic]
+Monads do not do anything you could not do by hand --- they just give you a
+uniform interface for patterns that appear repeatedly. The Maybe monad is just
+null-checking with a nice API. The List monad is just \code{concatMap}. The IO
+monad in Haskell sequences side effects --- but the effects still happen; the
+monad just organizes the sequencing.
+
+Do not fall into the trap of thinking that monads are inherently difficult or
+mysterious. The categorical definition is abstract, but the programming pattern
+is: ``sequence operations that produce contextualized results, automatically
+threading the context through.''
+\end{warning}
+
+% ============================================================
+\section{Template Template Parameters in C++}
+\label{sec:template-template}
+% ============================================================
+
+We have established what higher-kinded types are in theory. Now let us look at
+how C++ achieves the same effect, because C++ does support this --- just with a
+different syntax than Haskell uses.
+
+The mechanism is called \textbf{template template parameters}. When you write a
+template whose parameter is itself a template, you are working with a type
+constructor of kind $\ast \to \ast$.
+
+\begin{lstlisting}[style=cpp]
+// A template template parameter: Container has kind * -> *
+// It takes a type (typename T) and produces a type
+template<template<typename> class Container, typename T>
+Container<T> replicate(T value, std::size_t count) {
+    Container<T> result;
+    for (std::size_t i = 0; i < count; ++i) {
+        result.push_back(value);
+    }
+    return result;
+}
+
+// Usage:
+auto v = replicate<std::vector>(42, 5);
+// v is std::vector<int>{42, 42, 42, 42, 42}
+
+auto d = replicate<std::deque>(3.14, 3);
+// d is std::deque<double>{3.14, 3.14, 3.14}
+\end{lstlisting}
+
+Here \code{Container} is a template template parameter of kind $\ast \to \ast$.
+The function \code{replicate} is polymorphic not just over the element type
+\code{T}, but over the \emph{container type constructor} \code{Container}. This
+is genuine higher-kinded polymorphism.
+
+\begin{cppconnection}[{Template Template Parameters: The Kind $\ast \to \ast$ in C++}]
+The syntax \code{template<typename> class Container} declares that
+\code{Container} is a type constructor that takes one type argument. When you
+instantiate the outer template with \code{std::vector}, \code{Container} becomes
+\code{std::vector}, which you can then apply to specific types.
+
+Note the difference:
+\begin{lstlisting}[style=cpp]
+// Regular template parameter -- T has kind *
+template<typename T>
+void print_value(T const& val);
+
+// Template template parameter -- Container has kind * -> *
+template<template<typename> class Container, typename T>
+void print_container(Container<T> const& c);
+
+// Template template with two parameters -- Map has kind * -> * -> *
+template<template<typename, typename> class Map,
+         typename Key, typename Value>
+void print_map(Map<Key, Value> const& m);
+\end{lstlisting}
+\end{cppconnection}
+
+\subsection{A Practical HKT Example: Generic fmap in C++}
+
+Let us implement something closer to Haskell's \code{fmap} for containers using
+template template parameters:
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <list>
+#include <deque>
+#include <functional>
+#include <algorithm>
+
+// fmap for containers of kind * -> *
+// Container :: * -> *,  F :: A -> B
+template<
+    template<typename, typename...> class Container,
+    typename A,
+    typename B,
+    typename... Extra,
+    typename F = std::function<B(A)>
+>
+Container<B> fmap(F func, Container<A, Extra...> const& input) {
+    Container<B> output;
+    std::transform(input.begin(), input.end(),
+                   std::back_inserter(output), func);
+    return output;
+}
+
+// Usage:
+std::vector<int>         xs     = {1, 2, 3, 4, 5};
+std::vector<std::string> strs   = fmap<std::vector>(
+    [](int x) { return std::to_string(x); }, xs);
+// strs == {"1", "2", "3", "4", "5"}
+
+std::list<double>        ys     = {1.0, 2.0, 3.0};
+std::list<double>        halved = fmap<std::list>(
+    [](double x) { return x / 2.0; }, ys);
+// halved == {0.5, 1.0, 1.5}
+\end{lstlisting}
+
+The \code{Extra...} parameter pack handles the extra allocator template
+parameters that STL containers carry. This is an unfortunate practical
+complication in C++ that does not exist in Haskell, but the core pattern is
+there.
+
+\subsection{Policies and the Curiously Recurring Template Pattern}
+
+Template template parameters appear naturally in the \textbf{policy-based design}
+pattern, where you parameterize a class over its behavior by passing type
+constructors:
+
+\begin{lstlisting}[style=cpp]
+// A generic cache that works with different storage backends.
+// Storage has kind * -> * (maps element type to a container type).
+template<
+    typename Key,
+    typename Value,
+    template<typename> class Storage = std::vector
+>
+class Cache {
+    Storage<std::pair<Key, Value>> data_;
+public:
+    void insert(Key k, Value v) {
+        data_.push_back({k, v});
+    }
+    std::optional<Value> lookup(Key const& k) const {
+        for (auto const& [key, val] : data_) {
+            if (key == k) return val;
+        }
+        return std::nullopt;
+    }
+};
+
+Cache<std::string, int, std::vector> vec_cache;  // vector-backed
+Cache<std::string, int, std::list>   list_cache;  // list-backed
+// Same interface, different storage strategy
+// The kind of Storage is * -> *
+\end{lstlisting}
+
+% ============================================================
+\section{Type-Level Programming: Types as Data}
+\label{sec:type-level-programming}
+% ============================================================
+
+We have seen that types can take other types as arguments. Now we take the next
+step: we can \emph{compute} at the type level. Types can be the inputs and
+outputs of computations that happen entirely at compile time.
+
+The key insight: type-level programming is programming with a functional language
+where:
+\begin{itemize}
+  \item \textbf{Data} is types (and type constructors).
+  \item \textbf{Functions} are type-level operations (template specializations,
+  type aliases, type families).
+  \item \textbf{Pattern matching} is template specialization.
+  \item \textbf{Recursion} is recursive template instantiation.
+  \item The computation happens at \textbf{compile time}, producing types as
+  results that the rest of your program uses.
+\end{itemize}
+
+\subsection{The TypeList: Data Structures at the Type Level}
+
+One of the classic type-level data structures is a \emph{type list}: a list whose
+elements are types.
+
+\begin{lstlisting}[style=cpp]
+// Type-level nil (empty list)
+struct TypeNil {};
+
+// Type-level cons (prepend a type to a list)
+template<typename Head, typename Tail>
+struct TypeCons {};
+
+// A list containing int, double, std::string:
+// TypeCons<int, TypeCons<double, TypeCons<std::string, TypeNil>>>
+
+// More convenient variadic version:
+template<typename... Ts>
+struct TypeList {};
+
+using MyTypes = TypeList<int, double, std::string, bool>;
+// MyTypes is a type encoding a list of types
+// No values of MyTypes ever exist -- it is pure type-level data
+\end{lstlisting}
+
+\code{TypeList<int, double, std::string, bool>} is a single type. It carries no
+data at runtime --- it is zero bytes, purely a compile-time artifact. But we can
+compute with it.
+
+\subsection{Type-Level Functions: Extracting Information from Type Lists}
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <cstddef>
+
+// Type-level function: get the length of a TypeList
+// This is a function from types to values (std::size_t)
+template<typename List>
+struct Length;
+
+// Base case: empty list has length 0
+template<>
+struct Length<TypeList<>> {
+    static constexpr std::size_t value = 0;
+};
+
+// Recursive case: Length<TypeList<Head, Tail...>> = 1 + Length<TypeList<Tail...>>
+template<typename Head, typename... Tail>
+struct Length<TypeList<Head, Tail...>> {
+    static constexpr std::size_t value = 1 + Length<TypeList<Tail...>>::value;
+};
+
+static_assert(Length<TypeList<>>::value           == 0);
+static_assert(Length<TypeList<int>>::value         == 1);
+static_assert(Length<TypeList<int, bool>>::value   == 2);
+static_assert(Length<TypeList<int, bool, double>>::value == 3);
+\end{lstlisting}
+
+Template specialization is pattern matching. The general template is the
+``catch-all'' case; the specialization is the specific pattern being matched.
+This is exactly how functional-language pattern matching works, just with type
+syntax.
+
+\subsection{Type-Level if: std::conditional}
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+
+// std::conditional<Condition, TrueType, FalseType>
+// is a type-level if-then-else:
+//    if (Condition) return TrueType; else return FalseType;
+
+using BigOrSmall = std::conditional<
+    sizeof(int) > 2,  // Condition (evaluated at compile time)
+    long long,        // TrueType
+    short             // FalseType
+>::type;
+// On a 32-bit or 64-bit system, BigOrSmall = long long
+
+// A practical use: choose a storage type based on size
+template<std::size_t N>
+using StorageType = typename std::conditional<
+    N <= 8,
+    std::uint8_t,
+    typename std::conditional<
+        N <= 16,
+        std::uint16_t,
+        typename std::conditional<
+            N <= 32,
+            std::uint32_t,
+            std::uint64_t
+        >::type
+    >::type
+>::type;
+
+static_assert(std::is_same_v<StorageType<4>,  std::uint8_t>);
+static_assert(std::is_same_v<StorageType<12>, std::uint16_t>);
+static_assert(std::is_same_v<StorageType<25>, std::uint32_t>);
+static_assert(std::is_same_v<StorageType<63>, std::uint64_t>);
+\end{lstlisting}
+
+\subsection{Type-Level Map: Applying a Function to Every Type in a List}
+
+\begin{lstlisting}[style=cpp]
+// Type-level map: apply a type function F to every type in a list
+// F is a template template parameter of kind * -> *
+template<template<typename> class F, typename List>
+struct TypeMap;
+
+// Base case
+template<template<typename> class F>
+struct TypeMap<F, TypeList<>> {
+    using type = TypeList<>;
+};
+
+// Recursive case: apply F to the head, recurse on the tail
+template<template<typename> class F, typename Head, typename... Tail>
+struct TypeMap<F, TypeList<Head, Tail...>> {
+    using type = typename TypeList<
+        typename F<Head>::type,    // Apply F to Head
+        // Then prepend to the mapped tail...
+        // (simplified -- see below for cleaner version)
+        void  // placeholder
+    >;
+    // Cleaner approach: use concat helper
+};
+
+// Cleaner: prepend a type to a TypeList
+template<typename T, typename List>
+struct Prepend;
+
+template<typename T, typename... Ts>
+struct Prepend<T, TypeList<Ts...>> {
+    using type = TypeList<T, Ts...>;
+};
+
+// Proper TypeMap
+template<template<typename> class F, typename List>
+struct TypeMap;
+
+template<template<typename> class F>
+struct TypeMap<F, TypeList<>> {
+    using type = TypeList<>;
+};
+
+template<template<typename> class F, typename Head, typename... Tail>
+struct TypeMap<F, TypeList<Head, Tail...>> {
+    using type = typename Prepend<
+        typename F<Head>::type,
+        typename TypeMap<F, TypeList<Tail...>>::type
+    >::type;
+};
+
+// Wrap every type in optional
+template<typename T>
+struct WrapOptional {
+    using type = std::optional<T>;
+};
+
+using Originals = TypeList<int, double, std::string>;
+using Optionals = TypeMap<WrapOptional, Originals>::type;
+// Optionals = TypeList<optional<int>, optional<double>, optional<string>>
+\end{lstlisting}
+
+This is type-level \code{fmap}. We are applying a type-level function
+(\code{WrapOptional}) to every element of a type-level list (\code{TypeList}).
+The result is a new type-level list. The functor pattern, now operating on kinds
+instead of types.
+
+\subsection{Type-Level Computation: Compile-Time Arithmetic}
+
+\begin{lstlisting}[style=cpp]
+// Type-level natural numbers (Peano encoding)
+struct Zero {};
+template<typename N> struct Succ {};
+
+// Type-level addition
+template<typename A, typename B>
+struct Add;
+
+template<typename B>
+struct Add<Zero, B> {
+    using type = B;
+};
+
+template<typename A, typename B>
+struct Add<Succ<A>, B> {
+    using type = Succ<typename Add<A, B>::type>;
+};
+
+// Convenience aliases
+using One   = Succ<Zero>;
+using Two   = Succ<One>;
+using Three = Succ<Two>;
+using Four  = Succ<Three>;
+
+// Two + Two = Four?
+using Result = Add<Two, Two>::type;
+static_assert(std::is_same_v<Result, Four>);  // Yes!
+\end{lstlisting}
+
+This looks toy-ish, but it is the foundation of techniques used in real libraries
+to track sizes, capacities, and array bounds at compile time. The
+\code{std::array<T, N>} template uses compile-time size tracking. Fixed-point
+arithmetic libraries use type-level computations to prevent precision errors.
+
+% ============================================================
+\section{Type Families in Haskell: Type Functions Made First-Class}
+\label{sec:type-families}
+% ============================================================
+
+Haskell provides a cleaner syntax for type-level computation through
+\textbf{type families}: named type-level functions that you can define by cases,
+just like ordinary functions.
+
+\begin{lstlisting}[style=haskell]
+{-# LANGUAGE TypeFamilies #-}
+
+-- A type family is a function from types to types
+type family Container a where
+    Container Int    = Vector Int
+    Container Double = Vector Double
+    Container String = [String]    -- lists for strings
+    Container a      = Maybe a     -- default: Maybe
+
+-- Type family for the "element type" of a container
+type family Element f where
+    Element (Maybe a)  = a
+    Element [a]        = a
+    Element (Either e a) = a
+
+-- Using a type family in a function signature
+-- Automatically computes the right return type
+mapAll :: (Element f -> Element g) -> f -> g
+mapAll = ...  -- implementation uses the type-level info
+\end{lstlisting}
+
+Type families are C++ template specializations, but first-class: they have a
+proper name, can be passed around, and compose cleanly. Haskell's type system is
+expressive enough to detect when a type family is \emph{injective} (one-to-one),
+which matters for type inference.
+
+\subsection{Associated Type Families: Types as Part of a Class}
+
+\begin{lstlisting}[style=haskell]
+-- A typeclass with an associated type
+class Collection f where
+    type Elem f    -- "the element type of f"
+    empty  :: f
+    insert :: Elem f -> f -> f
+    toList :: f -> [Elem f]
+
+-- Instance for lists
+instance Collection [a] where
+    type Elem [a] = a
+    empty  = []
+    insert = (:)
+    toList = id
+
+-- Instance for Set
+instance Collection (Set.Set a) where
+    type Elem (Set.Set a) = a
+    empty  = Set.empty
+    insert = Set.insert
+    toList = Set.toList
+\end{lstlisting}
+
+The associated type \code{type Elem f} inside the typeclass is a type-level
+function computed for each instance. This is very similar to C++ concepts with
+\code{typename Container::value\_type}: the element type is determined by the
+container type.
+
+\begin{cppconnection}[Associated Types in C++: Nested Type Aliases]
+C++ achieves a similar effect through nested type aliases and \code{typename}:
+
+\begin{lstlisting}[style=cpp]
+#include <vector>
+#include <set>
+#include <concepts>
+
+// A concept requiring a "value_type" associated type
+template<typename C>
+concept Collection = requires(C c) {
+    typename C::value_type;  // C must have an associated element type
+    { c.begin() } -> std::input_or_output_iterator;
+    { c.end()   } -> std::input_or_output_iterator;
+};
+
+// A function that works for any Collection
+// -- uses the associated type to compute return type
+template<Collection C>
+auto sum_all(C const& c) -> typename C::value_type {
+    typename C::value_type total{};
+    for (auto const& x : c)
+        total += x;
+    return total;
+}
+
+// Works for vector<int>, set<double>, list<long long>, etc.
+std::vector<int> v = {1, 2, 3, 4, 5};
+auto s = sum_all(v);  // s has type int, inferred via C::value_type
+\end{lstlisting}
+
+The \code{typename C::value\_type} is C++'s syntax for accessing an associated
+type. It is a type-level computation: ``look up the \code{value\_type} member
+of the type \code{C}''.
+\end{cppconnection}
+
+% ============================================================
+\section{A Glimpse of Category Theory}
+\label{sec:category-theory-glimpse}
+% ============================================================
+
+We have been using the word ``Functor'' in a technical sense. It is time to
+acknowledge where it comes from and plant some seeds for deeper exploration.
+
+\textbf{Category theory} is a branch of mathematics that studies mathematical
+structures and relationships between them at an extremely high level of
+abstraction. It turns out that types and functions form a mathematical structure
+called a \textbf{category}, and the abstractions we have been studying
+(Functor, Monad, Applicative) have precise categorical definitions.
+
+\subsection{Types and Functions Form a Category}
+
+\begin{definition}
+A \textbf{category} $\mathcal{C}$ consists of:
+\begin{itemize}
+  \item A collection of \textbf{objects}.
+  \item For each pair of objects $A, B$, a collection of \textbf{morphisms}
+  (arrows) from $A$ to $B$, written $\mathcal{C}(A, B)$.
+  \item A \textbf{composition} operation: given $f : A \to B$ and $g : B \to C$,
+  their composition $g \circ f : A \to C$.
+  \item For each object $A$, an \textbf{identity morphism} $\mathsf{id}_A : A \to
+  A$.
+\end{itemize}
+These must satisfy: identity laws and associativity of composition.
+\end{definition}
+
+Types and functions form a category, called $\mathbf{Hask}$ (for Haskell) or
+$\mathbf{Types}$:
+\begin{itemize}
+  \item \textbf{Objects}: types (\typename{int}, \typename{bool},
+  \typename{string}, \ldots).
+  \item \textbf{Morphisms from $A$ to $B$}: (total) functions of type $A \to B$.
+  \item \textbf{Composition}: function composition.
+  \item \textbf{Identity}: the identity function \code{id}.
+\end{itemize}
+
+This is a category because function composition is associative and identity
+functions exist.
+
+\subsection{Functors Are Structure-Preserving Maps Between Categories}
+
+In category theory, a \textbf{functor} $F : \mathcal{C} \to \mathcal{D}$ is a
+mapping between categories that:
+\begin{itemize}
+  \item Maps each object in $\mathcal{C}$ to an object in $\mathcal{D}$.
+  \item Maps each morphism $f : A \to B$ in $\mathcal{C}$ to a morphism
+  $F(f) : F(A) \to F(B)$ in $\mathcal{D}$.
+  \item Preserves identity: $F(\mathsf{id}_A) = \mathsf{id}_{F(A)}$.
+  \item Preserves composition: $F(g \circ f) = F(g) \circ F(f)$.
+\end{itemize}
+
+An \textbf{endofunctor} is a functor from a category to \emph{itself}:
+$F : \mathcal{C} \to \mathcal{C}$. The functors we have been studying (Maybe,
+List, vector, etc.) are endofunctors on the category of types: they map types to
+types and functions to functions.
+
+The two conditions on endofunctors are exactly our Functor laws! Preserving
+identity is the identity law. Preserving composition is the composition law.
+
+\subsection{A Monad Is a Monoid in the Category of Endofunctors}
+
+You may have heard this famous definition: \emph{``A monad is just a monoid in
+the category of endofunctors. What's the problem?''} This is both a genuine
+mathematical fact and a famous joke about category theory's opacity. Let us
+explain what it actually means.
+
+A \textbf{monoid} is a set $M$ with a binary operation $\cdot : M \times M \to M$
+and an identity element $e \in M$ such that:
+\begin{itemize}
+  \item $e \cdot x = x = x \cdot e$ (identity).
+  \item $(x \cdot y) \cdot z = x \cdot (y \cdot z)$ (associativity).
+\end{itemize}
+
+Familiar monoids: integers under addition (identity is 0), strings under
+concatenation (identity is the empty string), functions under composition
+(identity is the identity function).
+
+Now: the collection of endofunctors on a category forms a monoid-like structure
+where:
+\begin{itemize}
+  \item The ``elements'' are endofunctors.
+  \item The ``multiplication'' is functor composition: $F \circ G$ (apply $G$
+  first, then $F$, so $F(G(A))$).
+  \item The ``identity'' is the Identity functor.
+\end{itemize}
+
+A monad $M$ is an endofunctor equipped with two natural transformations:
+\begin{itemize}
+  \item $\eta : \mathsf{Id} \to M$ (the \code{return}/\code{pure} operation ---
+  embed a plain value into $M$).
+  \item $\mu : M \circ M \to M$ (the \code{join} operation --- flatten a double
+  application $M(M(A))$ into $M(A)$).
+\end{itemize}
+These satisfy coherence conditions that mirror the monoid laws. So a Monad is
+literally a monoid object in the monoidal category of endofunctors.
+
+In plain English: a Monad is a type constructor that you can \emph{compose with
+itself} (giving you $M(M(A))$) and then \emph{flatten} (giving you $M(A)$), and
+this flattening is associative and respects a unit. Bind (\code{>>=}) is
+\code{join . fmap}, which is why bind + return = join + return.
+
+\begin{intuition}
+You do not need to understand the full categorical machinery to use monads
+effectively. The categorical perspective tells you \emph{why} the monad laws have
+the form they do: they are the monoid laws, lifted to the category of
+endofunctors. This is the deep reason why chaining monadic operations is so
+clean: associativity means ``how you group the chain does not matter.''
+\end{intuition}
+
+\subsection{Natural Transformations: Mappings Between Functors}
+
+The last categorical concept worth planting: a \textbf{natural transformation}
+is a mapping between two functors $F$ and $G$ that is ``compatible with the
+functors' action on morphisms.''
+
+In programming terms: if \code{F} and \code{G} are both functors, a natural
+transformation $\alpha : F \Rightarrow G$ is a polymorphic function:
+\[
+\alpha_A : F(A) \to G(A) \quad \text{for every type } A
+\]
+that satisfies: for any function $f : A \to B$,
+$G(\mathsf{fmap}\ f) \circ \alpha_A = \alpha_B \circ F(\mathsf{fmap}\ f)$.
+
+In other words: it does not matter whether you map first and then apply $\alpha$,
+or apply $\alpha$ first and then map. The transformation commutes with mapping.
+
+In Haskell, a natural transformation is a function \code{forall a. F a -> G a}:
+
+\begin{lstlisting}[style=haskell]
+-- Natural transformations between functors:
+maybeToList :: Maybe a -> [a]
+maybeToList Nothing  = []
+maybeToList (Just x) = [x]
+
+listToMaybe :: [a] -> Maybe a
+listToMaybe []    = Nothing
+listToMaybe (x:_) = Just x
+
+-- The naturality condition is automatically satisfied for any
+-- parametrically polymorphic function in Haskell (by the
+-- "free theorem" / parametricity -- a beautiful result we will
+-- explore in Chapter 13)
+\end{lstlisting}
+
+Natural transformations are how you convert between different ``shapes'' of
+containers in a way that commutes with the mapping operation. They arise naturally
+(pun intended) whenever you need to convert between functor instances.
+
+\begin{keyinsight}[The Category-Theory Hierarchy for Types]
+Here is the big picture of the categorical structures we have encountered,
+organized by their power level:
+\[
+\text{Functor} \subsetneq \text{Applicative} \subsetneq \text{Monad}
+\]
+Each level is strictly more powerful than the one before:
+\begin{itemize}
+  \item \textbf{Functor}: map a function over a context.
+  \item \textbf{Applicative}: additionally, apply a function-in-context; combine
+  independent effects.
+  \item \textbf{Monad}: additionally, chain dependent effects; later
+  computations can depend on the results of earlier ones.
+\end{itemize}
+Use the weakest abstraction that suffices. Monad is powerful but restrictive ---
+it forces sequential evaluation. Applicative allows more parallelism. Choose
+deliberately.
+\end{keyinsight}
+
+% ============================================================
+\section{Putting It Together: A Kind-Polymorphic Design in C++}
+\label{sec:putting-together}
+% ============================================================
+
+Let us write a more substantial example that brings together template template
+parameters, type-level computation, and the functor pattern in a single, cohesive
+design.
+
+The goal: a generic pipeline processor that applies a sequence of transformations
+to a value inside any Functor-compatible container.
+
+\begin{lstlisting}[style=cpp]
+#include <optional>
+#include <vector>
+#include <functional>
+#include <string>
+#include <type_traits>
+#include <iostream>
+
+// ----- A minimal Functor interface for C++ -----
+
+// Primary template -- not a Functor by default
+template<typename F>
+struct FunctorTraits;
+
+// Functor instance for std::optional
+template<typename A>
+struct FunctorTraits<std::optional<A>> {
+    using value_type = A;
+
+    template<typename B>
+    using rebind = std::optional<B>;
+
+    template<typename B>
+    static std::optional<B> fmap(std::function<B(A)> f,
+                                  std::optional<A> const& fa) {
+        if (fa.has_value()) return f(*fa);
+        return std::nullopt;
+    }
+};
+
+// Functor instance for std::vector
+template<typename A>
+struct FunctorTraits<std::vector<A>> {
+    using value_type = A;
+
+    template<typename B>
+    using rebind = std::vector<B>;
+
+    template<typename B>
+    static std::vector<B> fmap(std::function<B(A)> f,
+                                std::vector<A> const& fa) {
+        std::vector<B> result;
+        result.reserve(fa.size());
+        for (auto const& x : fa) result.push_back(f(x));
+        return result;
+    }
+};
+
+// ----- A pipeline of transformations -----
+
+// A pipeline step: a function from A -> B
+template<typename FA>
+auto pipeline_step(FA const& container,
+                   std::function<
+                       typename FunctorTraits<FA>::value_type(
+                           typename FunctorTraits<FA>::value_type)
+                   > step)
+{
+    using Traits = FunctorTraits<FA>;
+    using A      = typename Traits::value_type;
+    return Traits::template fmap<A>(step, container);
+}
+
+// ----- Demo -----
+
+int main() {
+    // Process optional<int>: might fail at any point
+    std::optional<int> opt_value = 21;
+
+    auto result_opt = pipeline_step<std::optional<int>>(
+        opt_value,
+        [](int x) { return x * 2; }
+    );
+    // result_opt = optional{42}
+
+    // Process vector<int>: apply to all elements
+    std::vector<int> vec_values = {1, 2, 3, 4, 5};
+
+    auto result_vec = pipeline_step<std::vector<int>>(
+        vec_values,
+        [](int x) { return x * x; }
+    );
+    // result_vec = {1, 4, 9, 16, 25}
+
+    std::cout << "Optional result: ";
+    if (result_opt) std::cout << *result_opt;
+    std::cout << "\nVector results: ";
+    for (int x : result_vec) std::cout << x << " ";
+    std::cout << "\n";
+}
+\end{lstlisting}
+
+This design uses \code{FunctorTraits<FA>} as a \emph{type class dictionary} --- the
+standard way to simulate type classes in C++ (also called the ``traits pattern''
+or, in category-theory terms, ``passing the dictionary explicitly''). The
+\code{fmap} function is selected based on the type of the container at compile
+time.
+
+% ============================================================
+\section{Exercises}
+\label{sec:ch11-exercises}
+% ============================================================
+
+\begin{exercise}
+Determine the kind of each of the following type constructors. Justify each
+answer.
+\begin{enumerate}
+  \item \code{std::unique\_ptr<T>} (takes one type argument)
+  \item \code{std::map<K, V>} (takes two type arguments)
+  \item A hypothetical \code{BiFunctor<F>} where \code{F} has kind
+  $\ast \to \ast \to \ast$
+  \item \code{std::function<R(A)>} viewed as a two-argument type constructor
+  in both \code{A} and \code{R}
+  \item A type \code{Fix<F>} defined as \code{Fix<F> = F<Fix<F>>} (used in
+  recursive type theory)
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+Implement the following in C++:
+\begin{enumerate}
+  \item A function \code{fmap\_optional} that applies a function to an
+  \code{std::optional<A>} and produces an \code{std::optional<B>}.
+  \item A function \code{bind\_optional} (i.e., \code{and\_then}) that takes
+  \code{std::optional<A>} and a function \code{A -> std::optional<B>} and chains
+  them together.
+  \item Verify the monad laws hold for your \code{bind\_optional} by writing
+  three \code{static\_assert} or test cases, one for each law.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+Write a template template parameter-based function \code{lift2} that applies a
+binary function \code{f : A -> B -> C} to two containers of the same kind
+$\ast \to \ast$, producing a container of type \code{C}. This is the Applicative
+\code{liftA2}. Instantiate it for \code{std::vector} (which should compute
+the Cartesian product of applications) and for \code{std::optional} (which
+should apply the function only if both optionals are non-empty).
+\end{exercise}
+
+\begin{exercise}
+Implement a compile-time type-level function \code{TypeFilter} that takes a
+predicate (a type template that defines a \code{bool} constant \code{value}) and
+a \code{TypeList}, and returns a new \code{TypeList} containing only the types
+from the original list for which the predicate holds.
+
+For example:
+\begin{lstlisting}[style=cpp]
+// Predicate: is the type an integer type?
+template<typename T>
+struct IsIntegral {
+    static constexpr bool value = std::is_integral_v<T>;
+};
+
+using Mixed = TypeList<int, double, bool, std::string, long>;
+using Ints  = TypeFilter<IsIntegral, Mixed>::type;
+// Ints should be TypeList<int, bool, long>
+\end{lstlisting}
+\end{exercise}
+
+\begin{exercise}
+Research question: Rust does not have higher-kinded types directly, but it
+achieves some of the same effects through \emph{associated types} in traits.
+Look up Rust's \code{Iterator} trait and its \code{Item} associated type.
+\begin{enumerate}
+  \item What kind does \code{Iterator} correspond to?
+  \item In what sense is \code{map} on a Rust iterator a functor \code{fmap}?
+  \item What limitation does Rust's approach have compared to Haskell's full
+  higher-kinded polymorphism?
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[The Reader Monad]
+The \textbf{Reader} monad represents computations that read from a shared,
+read-only environment. Define:
+\begin{itemize}
+  \item \code{Reader<R, A>} as a wrapper around a function \code{R -> A}.
+  \item \code{pure(a)} as \code{Reader(const r -> a)} (ignores the environment,
+  always returns \code{a}).
+  \item \code{bind(m, f)} as \code{Reader(r -> f(m.run(r)).run(r))} (runs the
+  computation, passes its result to \code{f}, runs the resulting computation
+  with the same environment).
+\end{itemize}
+Implement this in C++ using \code{std::function}. Show that it satisfies the
+monad laws. Then use it to implement a small example: a tree-printing function
+that reads an indentation level from the environment and recursively increases
+it.
+\end{exercise}
+
+% ============================================================
+\section{Summary}
+\label{sec:ch11-summary}
+% ============================================================
+
+We have traveled from the familiar world of values and types all the way up to
+kinds, higher-kinded types, and type-level computation. Let us consolidate the
+journey.
+
+The hierarchy has three levels: \textbf{values} live in \textbf{types}, and
+types live in \textbf{kinds}. Ordinary types like \typename{int} have kind $\ast$.
+Type constructors like \typename{vector} have kind $\ast \to \ast$: they take a
+type and produce a type. This is the type-level analog of a value-level function.
+
+A type is \textbf{higher-kinded} when its kind has an arrow in the \emph{input}
+position, meaning it takes a type constructor (not just a simple type) as an
+argument. This allows you to abstract over \emph{families} of types, not just
+individual types.
+
+\textbf{Functors} are the canonical higher-kinded abstraction: a type constructor
+$F : \ast \to \ast$ with a mapping operation that lifts functions into
+the container. The two functor laws --- identity and composition --- ensure the
+mapping is structure-preserving. Every container that ``knows how to be mapped
+over'' is a functor.
+
+\textbf{Applicative Functors} extend functors by allowing functions-in-context to
+be applied to values-in-context. They sit between Functor and Monad and are
+particularly useful for combining independent effects.
+
+\textbf{Monads} are the most powerful abstraction: they add the ability to
+\emph{chain} dependent computations, each of which produces a new context. The
+bind operation threads a value out of a context, passes it to a function that
+produces a new context, and returns the result. Monads give you uniform,
+composable error handling (Maybe/Expected), non-determinism (List), environment
+reading (Reader), state threading (State), and much more.
+
+In C++, higher-kinded polymorphism appears through \textbf{template template
+parameters}: \code{template<template<typename> class F>} takes a type constructor
+of kind $\ast \to \ast$ as a parameter. This is lower-level than Haskell's kind
+polymorphism, but it achieves the same effect for many practical purposes.
+
+\textbf{Type-level programming} treats types as data and type constructors as
+functions, using template specialization as pattern matching and recursive
+instantiation as recursion. Type lists, type-level if (\code{std::conditional}),
+type-level map, and compile-time natural numbers are all expressible in C++
+through this mechanism.
+
+Finally, we glimpsed the \textbf{categorical foundations}: types and functions
+form a category, functors are endofunctors on this category, and a monad is
+precisely a monoid in the category of endofunctors --- meaning its \code{join}
+operation is associative with a unit, mirroring the monoid laws.
+
+The chapter that follows will build on these ideas to explore how dependent types
+interact with the kind hierarchy --- what happens when types can depend on values,
+and values can influence which type constructors are applied.
+
+\begin{takeaway}[Chapter 11: Key Takeaways]
+\begin{itemize}
+    \item \textbf{Three levels of abstraction}: values inhabit types ($42 :
+    \mathtt{int}$), and types inhabit kinds ($\mathtt{int} : \ast$). The kind
+    $\ast$ classifies all complete, ordinary types. The kind $\ast \to \ast$
+    classifies type constructors like \typename{vector} and \typename{optional}.
+
+    \item \textbf{Kinds are the types of types}. The kind grammar is simple:
+    $\kappa ::= \ast \mid \kappa \to \kappa$. Every additional arrow in a kind
+    represents one more type argument a type constructor needs before becoming
+    complete.
+
+    \item \textbf{A type is higher-kinded} if it takes another type constructor
+    as an argument --- if its kind has an arrow in the input position. Higher-kinded
+    types let you abstract over families of containers, not just individual types.
+
+    \item \textbf{Functor} is the canonical HKT abstraction: a type constructor
+    $F : \ast \to \ast$ with $\mathsf{fmap} : (A \to B) \to F(A) \to F(B)$. It
+    lifts functions into containers while preserving structure. The identity and
+    composition laws guarantee trustworthy behavior.
+
+    \item \textbf{Applicative} extends Functor: apply a function-in-context to a
+    value-in-context. Useful for combining independent effects. Sits between
+    Functor and Monad.
+
+    \item \textbf{Monad} is the most powerful: chain dependent contextualized
+    computations via bind ($A \to M(B)$). Maybe handles failure, List handles
+    non-determinism, State handles mutable state, Reader handles shared
+    environments. The monad laws (identity, associativity) make chains
+    compositional.
+
+    \item \textbf{Template template parameters} in C++ (\code{template<typename>
+    class F}) take type constructors of kind $\ast \to \ast$ as arguments. This
+    is C++'s mechanism for higher-kinded polymorphism.
+
+    \item \textbf{Type-level programming} treats types as data and type
+    constructors as functions. Template specialization is pattern matching;
+    recursive instantiation is recursion. \code{std::conditional} is type-level
+    \code{if}. Type lists are type-level lists.
+
+    \item \textbf{Category theory underpins it all}: types and functions form a
+    category; functors are endofunctors on it; a monad is a monoid in the category
+    of endofunctors (its bind is associative with a unit). The categorical laws
+    are exactly the programming laws we care about.
+
+    \item \textbf{Use the weakest abstraction that suffices.} Not every context
+    needs a Monad. Applicative allows more parallelism. Plain Functor is enough
+    for simple mapping. Choose deliberately based on what dependencies exist
+    between your computations.
+\end{itemize}
+\end{takeaway}

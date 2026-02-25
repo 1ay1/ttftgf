@@ -1,0 +1,133 @@
+% ============================================================
+%  Preface
+%  Type Theory from the Ground Up
+% ============================================================
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+
+\begin{quote}
+\textit{``The purpose of abstraction is not to be vague, but to create a new semantic level
+in which one can be absolutely precise.''}
+\hfill --- Edsger W.\ Dijkstra
+\end{quote}
+
+\bigskip
+
+\noindent
+This book exists because of a gap.
+
+On one side of the gap sit the \emph{practitioners}: C++ programmers who use templates
+every day, who write \code{std::vector<int>} without a second thought, who have perhaps
+wrestled with SFINAE or fumbled through a concept declaration. They know that types
+matter, but they have never been told \emph{why} types work the way they do.
+
+On the other side sit the \emph{theorists}: type-theory textbooks that begin with
+judgment forms and inference rules, that assume familiarity with proof theory, and that
+rarely mention a real programming language until the appendix (if ever).
+
+This book is a bridge. It starts from C++ --- the language you already know, the
+language whose templates are among the most powerful (and most confusing) type-level
+mechanisms in any mainstream language --- and walks you, step by step, through the
+mathematical ideas that make those mechanisms tick. By the end, you will understand
+why \code{std::variant} is a sum type, why function types are contravariant in their
+argument, why Hindley--Milner inference terminates, and what the Curry--Howard
+correspondence really says about the programs you write.
+
+\section*{Who This Book Is For}
+
+You are a working programmer --- perhaps primarily in C++, but the ideas transfer to
+any statically typed language. You are comfortable reading C++ code, including basic
+templates and lambdas. You do not need a background in mathematics beyond curiosity
+and the willingness to follow a careful argument.
+
+If you have ever:
+\begin{itemize}[itemsep=3pt]
+  \item Stared at a template error message and wished you understood what the compiler
+        was actually complaining about,
+  \item Wondered what ``type erasure'' really means, or why \code{std::function} is
+        slower than a raw template,
+  \item Heard the phrase ``types are propositions'' and wanted to know what that means
+        concretely,
+  \item Wanted to design types that make illegal states \emph{impossible} rather than
+        just detectable,
+  \item Been curious about Haskell, Rust, or Idris and wanted a conceptual bridge from
+        C++ to those type systems,
+\end{itemize}
+then this book is for you.
+
+\section*{How This Book Is Organized}
+
+The sixteen chapters form a deliberate arc:
+
+\begin{description}[style=nextline, font=\bfseries, itemsep=6pt]
+  \item[Part I: Foundations (Chapters 1--4)]
+    We begin by asking what a type \emph{is}, catalog the types you already use, show
+    how to build new types from old ones, and introduce the lambda calculus --- the
+    minimal language of computation that underlies everything that follows.
+
+  \item[Part II: The Core Theory (Chapters 5--9)]
+    We develop the major ideas of type theory: parametric polymorphism (generics),
+    type inference (how the compiler deduces types), subtyping and variance, the
+    algebra of types, and recursive types. Each chapter grounds the theory in concrete
+    C++ code.
+
+  \item[Part III: Advanced Type Systems (Chapters 10--13)]
+    We climb to dependent types, higher-kinded types, concepts and constraints, and
+    the machinery of SFINAE and template metaprogramming. These are the chapters where
+    C++'s template system reveals its full power --- and its deep connection to type
+    theory.
+
+  \item[Part IV: The Big Picture (Chapters 14--16)]
+    We step back to see the Curry--Howard correspondence (types as proofs), survey the
+    research frontier (session types, linear types, refinement types), and synthesize
+    everything into a practitioner's toolkit for type-safe design.
+\end{description}
+
+Each chapter follows a consistent structure: a motivating question, the theoretical
+answer, the C++ manifestation, worked examples, and exercises. You can read the book
+linearly (recommended on first reading) or dip into individual chapters as reference
+once you have the foundations.
+
+\section*{Notation and Conventions}
+
+Code examples are in C++20 unless otherwise noted. When we show code in other languages
+(Haskell, Idris, pseudocode), we label the listing style explicitly. All C++ code has
+been tested with a modern compiler (GCC 13+ or Clang 17+).
+
+Mathematical notation is introduced gradually and always accompanied by an intuitive
+explanation. We use:
+\begin{itemize}[itemsep=3pt]
+  \item $A \to B$ for function types (a function from $A$ to $B$),
+  \item $A \times B$ for product types (a pair of $A$ and $B$),
+  \item $A + B$ for sum types (either $A$ or $B$),
+  \item $\forall \alpha.\ T$ for universally quantified (polymorphic) types,
+  \item $\Gamma \vdash e : T$ for typing judgments (``in context $\Gamma$,
+        expression $e$ has type $T$''),
+  \item $\llbracket T \rrbracket$ for the set of values inhabiting type $T$.
+\end{itemize}
+
+Definitions, theorems, and key insights are set in highlighted boxes for easy reference:
+
+\begin{keyinsight}[Example]
+Key insights summarize the most important ideas in a chapter. When reviewing, these
+are the boxes to re-read.
+\end{keyinsight}
+
+\begin{cppconnection}[Example]
+C++ Connection boxes show how a theoretical idea maps directly to a C++ feature or
+idiom.
+\end{cppconnection}
+
+\section*{Acknowledgments}
+
+This book was generated with the assistance of Claude, an AI assistant by Anthropic.
+The exposition, examples, and structure reflect a collaboration between human intent
+and machine fluency. Every code example has been designed to compile and run; every
+mathematical claim has been written with care for correctness.
+
+The ideas in this book belong to generations of researchers: Alonzo Church, Haskell
+Curry, William Howard, Per Martin-L\"of, Robin Milner, John Reynolds, Benjamin Pierce,
+Philip Wadler, and many others. We are merely guides through the landscape they built.
+
+\bigskip
+\hfill \textit{February 2026}

@@ -1,0 +1,1327 @@
+% ============================================================
+%  Chapter 8 ---'' Type Algebra: The Mathematics of Types
+%  Type Theory from the Ground Up
+% ============================================================
+\chapter{Type Algebra --- The Mathematics of Types}
+\label{ch:type-algebra}
+
+\begin{quote}
+\itshape
+``The unreasonable effectiveness of mathematics in the natural sciences'' is famous.
+Less famous, but just as striking: the unreasonable effectiveness of \emph{arithmetic}
+in the theory of types.
+\end{quote}
+
+\bigskip
+
+Here is a secret that took mathematicians and computer scientists decades to fully appreciate:
+\textbf{types obey the same rules as ordinary arithmetic}.
+Addition, multiplication, exponentiation, distributive laws, even derivatives --- all of it
+carries over, perfectly and precisely, from the world of numbers to the world of types.
+
+This is not a metaphor. It is not an analogy. It is a theorem.
+
+By the end of this chapter you will be able to look at a type definition and read it the
+same way you read an algebraic expression. You will understand \emph{why} sum types are
+called sum types, why product types are called product types, and why function types are
+the exponentials of type theory. You will compute cardinalities to catch bugs before they
+happen, derive algebraic identities and verify them with code, and even glimpse the
+astonishing fact that you can \emph{differentiate} a data type with respect to one of its
+fields.
+
+Let us start at the very beginning: counting.
+
+% ============================================================
+\section{Cardinality --- Counting the Inhabitants of a Type}
+\label{sec:cardinality}
+% ============================================================
+
+Every type is, at its core, a \emph{set of values}.
+The \textbf{cardinality} of a type is simply the number of distinct values that inhabit it.
+We write $|T|$ for the cardinality of type $T$.
+
+\begin{definition}[Cardinality of a Type]
+The \textbf{cardinality} $|T|$ of a type $T$ is the number of distinct, well-typed
+closed terms that have type $T$.  Equivalently, it is the number of elements in the
+set of values that $T$ denotes.
+\end{definition}
+
+Let us build up a table of cardinalities for the types you already know.
+
+\subsection{The Primitive Types}
+
+\paragraph{\typename{bool}.}
+A boolean has exactly two values: \code{true} and \code{false}.
+Therefore $|\Bool| = 2$.
+
+\paragraph{\typename{uint8\_t}.}
+An unsigned 8-bit integer ranges from $0$ to $255$ inclusive.
+That is $256 = 2^8$ values, so $|\typename{uint8\_t}| = 256$.
+
+\paragraph{\typename{uint16\_t} and \typename{uint32\_t}.}
+By the same logic, $|\typename{uint16\_t}| = 65{,}536$ and
+$|\typename{uint32\_t}| = 4{,}294{,}967{,}296$.
+
+\paragraph{The unit type.}
+Recall from Chapter~3 that the \emph{unit type} (called \typename{void} in C when used as a
+return type, or implemented as a dedicated \typename{Unit} struct) has \textbf{exactly one}
+inhabitant --- the single, trivial value \code{()}.  Therefore $|\Unit| = 1$.
+
+\paragraph{The bottom type / never type.}
+The \emph{bottom type} (called \typename{never} in TypeScript, \typename{Void} in Haskell,
+\typename{std::unreachable\_result} conceptually in C++) has \textbf{zero} inhabitants.
+You cannot construct a value of this type.  Therefore $|\Void| = 0$.
+
+\begin{keyinsight}[The Four Fundamental Cardinalities]
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Type}            & \textbf{Example}            & \textbf{Cardinality} \\
+\midrule
+Bottom / Never           & \typename{std::unreachable} & $0$  \\
+Unit / Trivial           & \typename{void} (as value)  & $1$  \\
+Bool                     & \typename{bool}             & $2$  \\
+Byte                     & \typename{uint8\_t}         & $256$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+These four numbers --- $0$, $1$, $2$, $256$ --- will reappear constantly as we do type algebra.
+\end{keyinsight}
+
+\subsection{Why Cardinality Matters}
+
+The cardinality of a type is not just a curiosity.
+It tells you something deep: \emph{how much information} a value of that type carries.
+A \typename{bool} carries one bit ($\log_2 2 = 1$).
+A \typename{uint8\_t} carries eight bits ($\log_2 256 = 8$).
+The unit type carries zero bits ($\log_2 1 = 0$) --- a value of type \Unit{} tells you nothing.
+The bottom type cannot even be constructed, so the question of how many bits it carries is moot.
+
+More importantly, cardinality reveals a stunning structure: the cardinalities of compound
+types are computed by the same arithmetic operations you use in high-school algebra.
+
+% ============================================================
+\section{Types as Numbers}
+\label{sec:types-as-numbers}
+% ============================================================
+
+Here is the central conceit of this chapter.
+We are going to assign each type a number --- its cardinality --- and then observe that every
+type-level construction corresponds to an arithmetic operation on those numbers.
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Arithmetic}   & \textbf{Type-theoretic counterpart}       & \textbf{C++ example}          \\
+\midrule
+$0$                   & Bottom type / \typename{never}            & \code{[[noreturn]]} functions \\
+$1$                   & Unit type                                 & \code{struct Unit \{\};}      \\
+$2$                   & \typename{bool}                           & \code{bool}                   \\
+$n$                   & Any type with $n$ inhabitants             & \code{uint8\_t} ($n{=}256$)   \\
+$A + B$               & Sum / variant type                        & \code{std::variant<A, B>}     \\
+$A \times B$          & Product / struct type                     & \code{struct \{A a; B b;\}}   \\
+$B^A$                 & Function type $A \to B$                   & \code{std::function<B(A)>}    \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\bigskip
+
+Look at that table carefully.
+Every basic algebraic entity --- zero, one, addition, multiplication, exponentiation ---
+has an exact counterpart in the world of types.
+And because types correspond to numbers in this precise way, \emph{every algebraic identity
+you know translates into a type isomorphism}.
+
+We will verify this claim identity by identity. But first, let us understand the three
+big constructions.
+
+% ============================================================
+\section{Product Types Are Multiplication}
+\label{sec:product-types}
+% ============================================================
+
+A \textbf{product type} $A \times B$ is a type whose values are \emph{pairs} $(a, b)$
+where $a : A$ and $b : B$.
+In C++ this is a struct (or \code{std::pair}, or \code{std::tuple}).
+
+\begin{definition}[Product Type]
+The \textbf{product type} $A \times B$ consists of all pairs $(a, b)$ where $a$ is a value
+of type $A$ and $b$ is a value of type $B$.  In C++:
+\begin{lstlisting}[style=cpp]
+struct Pair { A first; B second; };
+// or equivalently
+std::pair<A, B>
+\end{lstlisting}
+\end{definition}
+
+\subsection{Counting Pairs}
+
+How many values does \code{std::pair<bool, bool>} have?
+Let us list them all:
+
+\begin{center}
+\code{(false, false)},\quad \code{(false, true)},\quad \code{(true, false)},\quad \code{(true, true)}
+\end{center}
+
+That is $4 = 2 \times 2$ values.
+For every choice of the first component (\code{true} or \code{false}) we have two choices
+for the second component.  The counts \emph{multiply}.
+
+\begin{keyinsight}[Product Types Multiply Cardinalities]
+\[
+|A \times B| = |A| \times |B|
+\]
+This is why struct types are called \emph{product} types.  The cardinality of a pair is the
+product of the cardinalities of its fields.
+\end{keyinsight}
+
+\begin{example}[Pairs, Triples, and Powers of 2]
+\begin{itemize}
+  \item $|\code{pair<bool,bool>}| = 2 \times 2 = 4$
+  \item $|\code{tuple<bool,bool,bool>}| = 2 \times 2 \times 2 = 8$
+  \item $|\code{tuple<bool,bool,bool,bool>}| = 2^4 = 16$
+  \item $|\code{pair<bool, uint8\_t>}| = 2 \times 256 = 512$
+  \item $|\code{pair<uint8\_t, uint8\_t>}| = 256 \times 256 = 65{,}536$
+\end{itemize}
+In general, a struct with $n$ boolean fields has $2^n$ inhabitants.
+\end{example}
+
+\subsection{Structs are Products of All Their Fields}
+
+A struct with three fields generalizes naturally:
+\[
+|A \times B \times C| = |A| \times |B| \times |C|
+\]
+
+\begin{lstlisting}[style=cpp]
+struct RGBPixel {
+    uint8_t red;    // 256 choices
+    uint8_t green;  // 256 choices
+    uint8_t blue;   // 256 choices
+};
+// |RGBPixel| = 256 * 256 * 256 = 16,777,216
+\end{lstlisting}
+
+An RGB pixel has over 16 million possible values. No surprise there --- that is the well-known
+``16 million colors'' of 24-bit color.  The type algebra gives you that number automatically.
+
+\begin{cppconnection}[Structs in C++]
+Every \code{struct} or \code{class} in C++ (ignoring padding and alignment, which are
+implementation details below the type level) is a product type.  Its cardinality is the
+product of the cardinalities of all its member variables.  This applies to \code{std::pair},
+\code{std::tuple}, and any user-defined aggregate type.
+\end{cppconnection}
+
+\subsection{Order Does Not Change the Count}
+
+Notice that $|A \times B| = |A| \times |B| = |B| \times |A| = |B \times A|$.
+Multiplication is commutative, so swapping the fields of a struct does not change
+how many values it has.
+This foreshadows the isomorphism $A \times B \cong B \times A$ that we will prove formally
+in Section~\ref{sec:isomorphisms}.
+
+% ============================================================
+\section{Sum Types Are Addition}
+\label{sec:sum-types}
+% ============================================================
+
+A \textbf{sum type} $A + B$ is a type whose values are \emph{either} a value of $A$
+\emph{or} a value of $B$ (but not both simultaneously, and with a tag to remember which).
+In C++ this is \code{std::variant}; in Haskell it is written \code{Either a b}.
+
+\begin{definition}[Sum Type / Coproduct]
+The \textbf{sum type} (or \textbf{coproduct}) $A + B$ consists of all values
+$\mathsf{Left}(a)$ for $a : A$ together with all values $\mathsf{Right}(b)$ for $b : B$.
+The two alternatives are \emph{disjoint} --- a tagged union.
+\end{definition}
+
+\subsection{Counting Alternatives}
+
+How many values does \code{std::variant<bool, uint8\_t>} have?
+\begin{itemize}
+  \item The \texttt{bool} alternative contributes \code{false} and \code{true}: 2 values.
+  \item The \texttt{uint8\_t} alternative contributes 0 through 255: 256 values.
+  \item Since every value is tagged --- you can always tell which alternative it is ---
+        there is no overlap.
+\end{itemize}
+Total: $2 + 256 = 258$ values.  The counts \emph{add}.
+
+\begin{keyinsight}[Sum Types Add Cardinalities]
+\[
+|A + B| = |A| + |B|
+\]
+This is why tagged union types are called \emph{sum} types.  The cardinality of a variant
+is the sum of the cardinalities of its alternatives.
+\end{keyinsight}
+
+\begin{example}[Optional Types via Sum]
+The type \code{std::optional<A>} is isomorphic to $A + \Unit$:
+either you have a value of type $A$, or you have the ``nothing'' value (the single
+inhabitant of \Unit).
+
+\[
+|\code{optional<bool>}| = |\Bool| + |\Unit| = 2 + 1 = 3
+\]
+
+The three inhabitants are: \code{nullopt}, \code{optional\{false\}}, and \code{optional\{true\}}.
+Exactly three.  Check it yourself!
+\end{example}
+
+\begin{example}[A Three-State Light Switch]
+Imagine a network device that can be:
+\begin{itemize}
+  \item \textbf{Disconnected} --- no information needed.
+  \item \textbf{Connecting} --- we have an IP address (a \code{uint32\_t}).
+  \item \textbf{Connected} --- we have an IP address and a connection ID (\code{uint64\_t}).
+\end{itemize}
+
+\begin{lstlisting}[style=cpp]
+struct Disconnected {};
+struct Connecting { uint32_t ip; };
+struct Connected  { uint32_t ip; uint64_t conn_id; };
+
+using DeviceState = std::variant<Disconnected, Connecting, Connected>;
+\end{lstlisting}
+
+The cardinality:
+\[
+|\typename{DeviceState}| = 1 + 2^{32} + 2^{32} \times 2^{64} = 1 + 2^{32} + 2^{96}
+\]
+Every single one of those values is a valid, representable device state.
+There are \emph{no} illegal states in this representation --- which is exactly what we want.
+\end{example}
+
+\begin{warning}[Untagged Unions Are Not Sum Types]
+C's \code{union} (without a tag) is \textbf{not} a sum type.  Because there is no tag,
+reading the wrong field is undefined behavior --- the ``values'' are not distinct in the
+type-theoretic sense.  Always use \code{std::variant} (or a hand-rolled tagged union)
+when you want a genuine sum type in C++.
+\end{warning}
+
+% ============================================================
+\section{Function Types Are Exponentiation}
+\label{sec:function-types-exp}
+% ============================================================
+
+This one surprises almost everyone when they first see it.
+The number of distinct functions from type $A$ to type $B$ is $|B|^{|A|}$.
+
+\begin{definition}[Function Type]
+The \textbf{function type} $A \to B$ (written \code{std::function<B(A)>} or simply
+\code{B f(A)} in C++) consists of all total functions from $A$ to $B$.
+\end{definition}
+
+\subsection{Why Exponentiation?}
+
+To define a function $f : A \to B$ we must choose, for \emph{each} value of $A$,
+\emph{some} value of $B$.  There are $|B|$ choices for each of the $|A|$ inputs,
+and the choices are independent.  So the total number of distinct functions is:
+\[
+|B|^{|A|}
+\]
+
+\begin{example}[Functions from \Bool{} to \Bool{}]
+There are $2^2 = 4$ functions from \typename{bool} to \typename{bool}.
+Let us list them all:
+
+\medskip
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Function name} & \textbf{f(false)} & \textbf{f(true)} \\
+\midrule
+Constant false   & false & false \\
+Logical NOT      & true  & false \\
+Identity         & false & true  \\
+Constant true    & true  & true  \\
+\bottomrule
+\end{tabular}
+\end{center}
+\medskip
+
+In C++:
+\begin{lstlisting}[style=cpp]
+bool const_false(bool) { return false; }
+bool logical_not(bool b) { return !b; }
+bool identity(bool b) { return b; }
+bool const_true(bool) { return true; }
+\end{lstlisting}
+
+Every possible \code{bool -> bool} function is one of these four.
+No others exist.
+\end{example}
+
+\begin{example}[Functions from \Bool{} to \typename{uint8\_t}]
+\[
+|\typename{uint8\_t}|^{|\Bool|} = 256^2 = 65{,}536
+\]
+There are 65,536 distinct functions from \typename{bool} to \typename{uint8\_t}.
+For each such function we must choose a byte for the \code{false} input and a byte for the
+\code{true} input, independently.  $256 \times 256 = 65{,}536$.
+\end{example}
+
+\begin{example}[Functions from \typename{uint8\_t} to \Bool{}]
+\[
+|\Bool|^{|\typename{uint8\_t}|} = 2^{256}
+\]
+This is a mind-bogglingly large number --- far more than the number of atoms in the observable
+universe.  Yet every predicate on a byte is one of these $2^{256}$ functions.
+\end{example}
+
+\begin{keyinsight}[Function Types Are Exponentials]
+\[
+|A \to B| = |B|^{|A|}
+\]
+This is the reason function types are sometimes called \emph{exponential types} in category
+theory and type theory.  The notation $B^A$ for the function type $A \to B$ is standard in
+mathematics and is used heavily in category theory.
+\end{keyinsight}
+
+\begin{intuition}
+Think of a function as a \emph{lookup table}.  For a function $f : A \to B$, the table has
+one row for each value of $A$, and in each row we write some value of $B$.  The number of
+different lookup tables we can fill in is exactly $|B|^{|A|}$ --- one factor of $|B|$ for
+each row.
+\end{intuition}
+
+% ============================================================
+\section{The Algebra Checks Out --- Proving the Identities}
+\label{sec:algebraic-identities}
+% ============================================================
+
+Now comes the payoff.  We claimed that types behave like numbers.  Let us verify this
+claim by proving the standard algebraic identities --- and then showing them in C++.
+
+Throughout this section, $\cong$ means \textbf{isomorphic}: there exist functions
+$f : A \to B$ and $g : B \to A$ such that $g \circ f = \mathrm{id}_A$ and
+$f \circ g = \mathrm{id}_B$.  Two types are isomorphic when they carry exactly the same
+information --- they can be converted to each other losslessly.
+
+\subsection{Identity for Products: \texorpdfstring{$A \times \Unit \cong A$}{A $\times$--- 1 $\cong$ A}}
+\label{sec:id-product}
+
+\textbf{Algebraic identity:} $n \times 1 = n$.
+
+\textbf{Type version:} A pair where one component is the unit type carries no extra information.
+The unit component always has exactly one value, so it contributes nothing.
+
+\textbf{Proof (by cardinality):}
+\[
+|A \times \Unit| = |A| \times |\Unit| = |A| \times 1 = |A|
+\]
+
+\textbf{Explicit isomorphism:}
+
+\begin{lstlisting}[style=cpp]
+struct Unit {};
+
+template<typename A>
+A strip_unit(std::pair<A, Unit> p) {
+    return p.first;           // throw away the Unit
+}
+
+template<typename A>
+std::pair<A, Unit> add_unit(A a) {
+    return {a, Unit{}};       // add a trivial Unit
+}
+// strip_unit(add_unit(x)) == x  for all x : A
+// add_unit(strip_unit(p)) == p  for all p : pair<A,Unit>
+\end{lstlisting}
+
+The two functions are mutual inverses --- a perfect isomorphism.
+
+\subsection{Identity for Sums: \texorpdfstring{$A + \Void \cong A$}{A + 0 $\cong$ A}}
+\label{sec:id-sum}
+
+\textbf{Algebraic identity:} $n + 0 = n$.
+
+\textbf{Type version:} A variant where one alternative is the bottom type is just the other type,
+because the bottom alternative can never be constructed.
+
+\textbf{Proof (by cardinality):}
+\[
+|A + \Void| = |A| + |\Void| = |A| + 0 = |A|
+\]
+
+In practice this means: if you write \code{std::variant<A, std::monostate>} and then
+ensure the \code{monostate} branch is never inhabited... you just have an \code{A}.
+(\code{std::monostate} plays the role of \Unit{} here; the true \Void{} cannot appear as
+a variant alternative in well-typed C++ code.)
+
+\subsection{Annihilation for Products: \texorpdfstring{$A \times \Void \cong \Void$}{A $\times$--- 0 $\cong$ 0}}
+\label{sec:annihilation}
+
+\textbf{Algebraic identity:} $n \times 0 = 0$.
+
+\textbf{Type version:} A struct that contains a field of type \Void{} (the impossible type)
+is itself impossible.
+
+\textbf{Proof (by cardinality):}
+\[
+|A \times \Void| = |A| \times |\Void| = |A| \times 0 = 0
+\]
+
+\textbf{Intuition:} To construct a pair $(a, v)$ where $v : \Void$, you would need to
+produce a value of the empty type --- which is impossible by definition.
+Therefore \emph{no} value of type $A \times \Void$ can ever exist.
+
+\begin{cppconnection}[Structs with Impossible Fields]
+If you somehow wrote a struct with a field of an uninhabited type, no object of that struct
+type could ever be constructed.  While C++ does not have a dedicated \typename{never} type,
+the pattern shows up naturally with templates:
+
+\begin{lstlisting}[style=cpp]
+// A type with no values (approximation in C++)
+struct Never {
+    Never() = delete;
+    Never(const Never&) = delete;
+    // no way to construct this
+};
+
+struct Impossible {
+    int data;
+    Never never_field; // this struct can never be constructed
+};
+\end{lstlisting}
+\end{cppconnection}
+
+\subsection{Functions from Unit: \texorpdfstring{$A^1 \cong A$}{A^1 $\cong$ A}}
+\label{sec:func-from-unit}
+
+\textbf{Algebraic identity:} $n^1 = n$.
+
+\textbf{Type version:} A function from the unit type to $A$ is essentially just a value of $A$.
+The function takes no meaningful input (the only input is the single \Unit{} value),
+so it just returns a fixed element of $A$.
+
+\textbf{Proof (by cardinality):}
+\[
+|A^{\Unit}| = |A|^{|\Unit|} = |A|^1 = |A|
+\]
+
+\textbf{Explicit isomorphism:}
+
+\begin{lstlisting}[style=cpp]
+// A function (Unit -> A) is the same as a value of A
+template<typename A>
+A call_unit_func(std::function<A(Unit)> f) {
+    return f(Unit{});
+}
+
+template<typename A>
+std::function<A(Unit)> make_unit_func(A value) {
+    return [value](Unit) { return value; };
+}
+\end{lstlisting}
+
+This is a deep insight: \emph{a thunk (a zero-argument function) and a value are
+interchangeable}.  In lazy languages, every value is secretly a thunk.
+
+\subsection{Functions to Unit: \texorpdfstring{$1^A \cong 1$}{1^A $\cong$ 1}}
+\label{sec:func-to-unit}
+
+\textbf{Algebraic identity:} $1^n = 1$.
+
+\textbf{Type version:} There is exactly one function from any type $A$ to the unit type:
+the constant function that always returns \code{()}.
+
+\textbf{Proof (by cardinality):}
+\[
+|\Unit^A| = |\Unit|^{|A|} = 1^{|A|} = 1
+\]
+
+\begin{lstlisting}[style=cpp]
+// The ONLY function from any type to Unit
+template<typename A>
+Unit discard(A) { return Unit{}; }
+// There is no other total function to Unit
+\end{lstlisting}
+
+This corresponds to the concept of a \emph{terminal object} in category theory:
+every type has a unique map to \Unit.
+
+\subsection{The Distributive Law: \texorpdfstring{$A \times (B + C) \cong (A \times B) + (A \times C)$}{A $\times$--- (B + C) $\cong$ A$\times$---B + A$\times$---C}}
+\label{sec:distributive}
+
+\textbf{Algebraic identity:} $a \times (b + c) = a \times b + a \times c$.
+
+\textbf{Type version:} A struct containing a variant field can be ``distributed'' into
+a variant of structs.
+
+\textbf{Proof (by cardinality):}
+\[
+|A \times (B + C)| = |A| \times (|B| + |C|) = |A| \times |B| + |A| \times |C|
+= |(A \times B) + (A \times C)|
+\]
+
+\textbf{Explicit isomorphism:}
+
+\begin{lstlisting}[style=cpp]
+// Direction 1: distribute the variant out of the struct
+template<typename A, typename B, typename C>
+std::variant<std::pair<A,B>, std::pair<A,C>>
+distribute(std::pair<A, std::variant<B,C>> p) {
+    return std::visit([&p](auto&& alt) ->
+        std::variant<std::pair<A,B>, std::pair<A,C>> {
+        using T = std::decay_t<decltype(alt)>;
+        if constexpr (std::is_same_v<T, B>)
+            return std::pair<A,B>{p.first, alt};
+        else
+            return std::pair<A,C>{p.first, alt};
+    }, p.second);
+}
+
+// Direction 2: factor the shared A back in
+template<typename A, typename B, typename C>
+std::pair<A, std::variant<B,C>>
+factor(std::variant<std::pair<A,B>, std::pair<A,C>> v) {
+    return std::visit([](auto&& p) ->
+        std::pair<A, std::variant<B,C>> {
+        return {p.first, p.second};
+    }, v);
+}
+\end{lstlisting}
+
+These two functions are mutual inverses, confirming the isomorphism.
+
+\begin{cppconnection}[Refactoring with the Distributive Law]
+This isomorphism is extremely practical.
+Suppose you have a connection state type with a shared IP address field:
+
+\begin{lstlisting}[style=cpp]
+// Before: IP address in the variant alternatives (duplicated)
+using State = std::variant<
+    std::pair<uint32_t, ConnectingData>,
+    std::pair<uint32_t, ConnectedData>
+>;
+
+// After: IP address factored out (distributive law in reverse)
+struct WithIP {
+    uint32_t ip;
+    std::variant<ConnectingData, ConnectedData> status;
+};
+\end{lstlisting}
+
+These two representations are \emph{isomorphic} --- they carry exactly the same information.
+Choose whichever is more convenient for your use case.
+\end{cppconnection}
+
+\subsection{Exponent Rules}
+\label{sec:exponent-rules}
+
+The exponent laws from arithmetic also hold for types:
+
+\paragraph{$C^{A+B} \cong C^A \times C^B$.}
+A function that accepts \emph{either} an $A$ or a $B$ is the same as a pair of functions:
+one for the $A$ case and one for the $B$ case.
+
+\begin{lstlisting}[style=cpp]
+// A function from variant<A,B> to C
+// is the same as a pair of functions: (A->C) and (B->C)
+template<typename A, typename B, typename C>
+std::pair<std::function<C(A)>, std::function<C(B)>>
+split_variant_func(std::function<C(std::variant<A,B>)> f) {
+    return {
+        [f](A a) { return f(std::variant<A,B>{a}); },
+        [f](B b) { return f(std::variant<A,B>{b}); }
+    };
+}
+\end{lstlisting}
+
+This corresponds to the universal property of coproducts, and is essentially what
+\code{std::visit} does.
+
+\paragraph{$(C^B)^A \cong C^{A \times B}$.}
+A curried function is the same as an uncurried function.
+This is \emph{currying}, named after Haskell Curry.
+
+\[
+(C^B)^A = C^{B \times A} = C^{A \times B}
+\]
+
+\begin{lstlisting}[style=cpp]
+// Currying: convert (A,B)->C into A->(B->C)
+template<typename A, typename B, typename C>
+std::function<std::function<C(B)>(A)>
+curry(std::function<C(A,B)> f) {
+    return [f](A a) {
+        return [f,a](B b) { return f(a, b); };
+    };
+}
+
+// Uncurrying: convert A->(B->C) into (A,B)->C
+template<typename A, typename B, typename C>
+std::function<C(A,B)>
+uncurry(std::function<std::function<C(B)>(A)> f) {
+    return [f](A a, B b) { return f(a)(b); };
+}
+\end{lstlisting}
+
+\begin{keyinsight}[The Complete Correspondence Table]
+\[
+\begin{array}{ccc}
+\textbf{Arithmetic} & & \textbf{Types} \\
+\hline
+0 & \longleftrightarrow & \Void\text{ (bottom)} \\
+1 & \longleftrightarrow & \Unit\text{ (top)} \\
+a + b & \longleftrightarrow & A + B\text{ (sum)} \\
+a \times b & \longleftrightarrow & A \times B\text{ (product)} \\
+b^a & \longleftrightarrow & A \to B\text{ (function)} \\
+n \times 1 = n & \longleftrightarrow & A \times \Unit \cong A \\
+n + 0 = n & \longleftrightarrow & A + \Void \cong A \\
+n \times 0 = 0 & \longleftrightarrow & A \times \Void \cong \Void \\
+n^1 = n & \longleftrightarrow & \Unit \to A \cong A \\
+1^n = 1 & \longleftrightarrow & A \to \Unit \cong \Unit \\
+a(b+c) = ab + ac & \longleftrightarrow & A \times (B+C) \cong A{\times}B + A{\times}C \\
+c^{a+b} = c^a \cdot c^b & \longleftrightarrow & A{+}B \to C \cong (A\to C) \times (B\to C) \\
+(c^b)^a = c^{ab} & \longleftrightarrow & A \to (B \to C) \cong A{\times}B \to C \\
+\end{array}
+\]
+\end{keyinsight}
+
+% ============================================================
+\section{Algebraic Data Types}
+\label{sec:adts}
+% ============================================================
+
+The Haskell and ML families of languages are built around \textbf{Algebraic Data Types (ADTs)}.
+This name is not a coincidence --- it comes directly from the arithmetic of types we have
+been doing.
+
+An algebraic data type is any type built from:
+\begin{itemize}
+  \item The unit type ($1$),
+  \item Sum types ($+$),
+  \item Product types ($\times$),
+  \item Recursion (for inductive types like lists and trees).
+\end{itemize}
+
+\subsection{Maybe / Optional}
+
+\begin{lstlisting}[style=haskell]
+data Maybe a = Nothing | Just a
+\end{lstlisting}
+
+\textbf{Algebraic reading:} \code{Maybe a} $= 1 + a$.
+\begin{itemize}
+  \item \code{Nothing} contributes exactly $1$ value (no data).
+  \item \code{Just a} contributes $|a|$ values (one for each value of $a$).
+\end{itemize}
+Total: $1 + |a|$.  This matches \code{std::optional<A>} exactly.
+
+\subsection{Either}
+
+\begin{lstlisting}[style=haskell]
+data Either a b = Left a | Right b
+\end{lstlisting}
+
+\textbf{Algebraic reading:} \code{Either a b} $= a + b$.
+Pure sum type.
+
+\subsection{The List Type and Its Generating Equation}
+
+\begin{lstlisting}[style=haskell]
+data List a = Nil | Cons a (List a)
+\end{lstlisting}
+
+\textbf{Algebraic reading:} Let $L = |$\code{List a}$|$ and $a = |$\code{a}$|$.
+\begin{itemize}
+  \item \code{Nil} contributes $1$ (the empty list).
+  \item \code{Cons a (List a)} contributes $a \times L$ (a head element times a tail list).
+\end{itemize}
+So $L$ satisfies the equation:
+\[
+L = 1 + a \cdot L
+\]
+
+\begin{keyinsight}[Solving the List Equation]
+Treat this as an algebraic equation and solve for $L$:
+\begin{align*}
+L &= 1 + a \cdot L \\
+L - a \cdot L &= 1 \\
+L(1 - a) &= 1 \\
+L &= \frac{1}{1 - a}
+\end{align*}
+But wait --- we know from the geometric series formula that:
+\[
+\frac{1}{1-a} = 1 + a + a^2 + a^3 + \cdots
+\]
+This is exactly right!  A list of $a$'s is either the empty list ($1$), a list of length 1
+($a$), a list of length 2 ($a^2 = a \times a$), a list of length 3 ($a^3$), and so on.
+The algebraic manipulation reveals the combinatorial structure of the type.
+\end{keyinsight}
+
+\begin{warning}[Division of Types Does Not Literally Exist]
+When we wrote $L = \frac{1}{1-a}$, we were not claiming that type division exists.
+The manipulation is formal --- a heuristic that happens to give the right power-series
+expansion.  The power series $1 + a + a^2 + \cdots$ is meaningful as a \emph{formal}
+sum of types, but it is infinite, so we interpret it as the inductive type (the fixpoint).
+The algebra guides our intuition; the actual proof uses the fixpoint theorem.
+\end{warning}
+
+\subsection{Trees}
+
+\begin{lstlisting}[style=haskell]
+data Tree a = Leaf | Node (Tree a) a (Tree a)
+\end{lstlisting}
+
+\textbf{Algebraic equation:} Let $T = T(a)$.
+\[
+T = 1 + T \cdot a \cdot T = 1 + a \cdot T^2
+\]
+Solving this (it is a quadratic in $T$) gives the formula for Catalan numbers --- the
+number of trees of a given shape.  The $n$-th Catalan number is:
+\[
+C_n = \frac{1}{n+1}\binom{2n}{n}
+\]
+and it counts the number of distinct binary trees with $n$ internal nodes.
+Type algebra connects directly to combinatorics.
+
+% ============================================================
+\section{Isomorphisms --- Lossless Conversions Between Types}
+\label{sec:isomorphisms}
+% ============================================================
+
+Two types $A$ and $B$ are \textbf{isomorphic}, written $A \cong B$, if there is a pair of
+functions $f : A \to B$ and $g : B \to A$ that are mutual inverses.
+
+\begin{definition}[Type Isomorphism]
+Types $A$ and $B$ are \textbf{isomorphic} ($A \cong B$) if there exist functions
+\[
+f : A \to B \qquad \text{and} \qquad g : B \to A
+\]
+such that $g(f(a)) = a$ for all $a : A$, and $f(g(b)) = b$ for all $b : B$.
+\end{definition}
+
+Isomorphic types carry the same amount of information.
+You can always convert between them without any loss.
+
+\begin{keyinsight}[Cardinality Is a Necessary Condition for Isomorphism]
+If $A \cong B$, then $|A| = |B|$.  (For finite types, the converse is also true:
+equal cardinalities imply isomorphism, because any bijection works.)
+\end{keyinsight}
+
+\subsection{Commutativity of Products and Sums}
+
+\[
+A \times B \cong B \times A
+\]
+\textbf{Isomorphism:}
+\begin{lstlisting}[style=cpp]
+template<typename A, typename B>
+std::pair<B,A> swap_pair(std::pair<A,B> p) {
+    return {p.second, p.first};
+}
+// swap_pair(swap_pair(p)) == p  -- involution, hence isomorphism
+\end{lstlisting}
+
+\[
+A + B \cong B + A
+\]
+\textbf{Isomorphism:}
+\begin{lstlisting}[style=cpp]
+template<typename A, typename B>
+std::variant<B,A> swap_variant(std::variant<A,B> v) {
+    return std::visit([](auto&& x) -> std::variant<B,A> {
+        return x;
+    }, v);
+}
+\end{lstlisting}
+
+\subsection{Associativity}
+
+\[
+(A \times B) \times C \cong A \times (B \times C)
+\]
+Regrouping a tuple does not change its information content.
+
+\[
+(A + B) + C \cong A + (B + C)
+\]
+A three-alternative variant is the same regardless of how the alternatives are nested.
+
+\subsection{A Practical Example of Isomorphic Refactoring}
+
+Suppose you have a logging system with these types:
+
+\begin{lstlisting}[style=cpp]
+enum class LogLevel { Info, Warning, Error };
+
+// Representation 1: level + message in a struct
+struct LogEntry {
+    LogLevel level;
+    std::string message;
+};
+
+// Representation 2: variant of specialized structs
+struct InfoEntry    { std::string message; };
+struct WarningEntry { std::string message; };
+struct ErrorEntry   { std::string message; };
+using LogEntry2 = std::variant<InfoEntry, WarningEntry, ErrorEntry>;
+\end{lstlisting}
+
+Are these isomorphic?
+\begin{align*}
+|\typename{LogEntry}|  &= |\typename{LogLevel}| \times |\typename{string}| = 3 \times \infty \\
+|\typename{LogEntry2}| &= |\typename{InfoEntry}| + |\typename{WarningEntry}| + |\typename{ErrorEntry}|
+                         = \infty + \infty + \infty = 3\infty
+\end{align*}
+Yes, the cardinalities match (treating string as having countably infinite inhabitants).
+The algebraic identity at work is:
+\[
+3 \times a = a + a + a
+\]
+which is exactly the distributive law: $3 \times a = (1 + 1 + 1) \times a = a + a + a$.
+
+% ============================================================
+\section{The Calculus of Types --- Differentiating Data Structures}
+\label{sec:type-calculus}
+% ============================================================
+
+We have seen that types have algebra.  Now for something truly remarkable:
+\textbf{types also have calculus}.  You can differentiate a type with respect to a type
+variable, and the result is meaningful.
+
+\subsection{What Is the Derivative of a Type?}
+
+The \textbf{derivative} of a type $F(a)$ with respect to $a$, written $\frac{d}{da}F(a)$
+or $F'(a)$, is the type of \textbf{one-hole contexts} for $F$.
+
+\begin{definition}[One-Hole Context]
+A \textbf{one-hole context} for a data structure is the data structure with exactly one
+element of type $a$ \emph{removed}, together with information about \emph{where} that
+element was.  It is a ``frame'' into which you can plug an element of type $a$ to get
+back the original structure.
+\end{definition}
+
+\begin{intuition}
+Think of taking a list $[1, 2, 3, 4, 5]$ and removing the element at position 2 to get the
+frame $[1, 2, \_, 4, 5]$.  The frame knows everything about the list except the missing
+element.  The type of all such frames is the derivative of the list type.
+\end{intuition}
+
+\subsection{Differentiation Rules}
+
+The rules for differentiating types \emph{look exactly like the rules of differential calculus}:
+
+\[
+\frac{d}{da}(1) = 0 \qquad \frac{d}{da}(a) = 1 \qquad \frac{d}{da}(F + G) = F' + G'
+\]
+\[
+\frac{d}{da}(F \times G) = F' \times G + F \times G' \qquad \text{(product rule!)}
+\]
+
+\begin{example}[Derivative of a Pair]
+\[
+\frac{d}{da}(a \times a) = \frac{d}{da}(a) \times a + a \times \frac{d}{da}(a)
+= 1 \times a + a \times 1 = a + a = 2a
+\]
+
+What does $2a$ mean as a type?  It means: a pair of $a$'s with one element removed has
+two possible forms --- either the \emph{first} element is missing (and we have the second
+element left over), or the \emph{second} element is missing (and we have the first element
+left over).
+
+In C++:
+\begin{lstlisting}[style=cpp]
+// One-hole context for pair<a, a>:
+// "which slot is empty" + "what's in the other slot"
+enum class Slot { First, Second };
+template<typename A>
+struct PairHole {
+    Slot which;   // which element was removed
+    A other;      // the remaining element
+};
+// |PairHole<A>| = 2 * |A|  -- matches the derivative!
+\end{lstlisting}
+\end{example}
+
+\begin{example}[Derivative of the List Type]
+Recall $L(a) = \frac{1}{1-a} = 1 + a + a^2 + a^3 + \cdots$
+
+\[
+L'(a) = \frac{d}{da}\!\left(\frac{1}{1-a}\right) = \frac{1}{(1-a)^2} = L(a)^2
+\]
+
+The one-hole context of a list is \textbf{a pair of lists} --- the elements \emph{before}
+the hole and the elements \emph{after} the hole.
+
+\begin{lstlisting}[style=cpp]
+// One-hole context for a list: two lists (prefix and suffix)
+template<typename A>
+struct ListZipper {
+    std::vector<A> before;  // elements before the cursor
+    std::vector<A> after;   // elements after the cursor
+    // the "hole" is between before and after
+};
+\end{lstlisting}
+
+This is the famous \textbf{list zipper} data structure, introduced by G\'{e}rard Huet.
+You can move the cursor left or right in O(1) time.
+The derivative of the type told us exactly what the zipper looks like.
+\end{example}
+
+\begin{keyinsight}[Zippers Are Derivatives]
+The \textbf{zipper} data structure --- a data structure with a ``cursor'' pointing to a
+specific element, allowing efficient local modifications --- is the categorical derivative
+of the original data structure type.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Data structure} $F(a)$ & \textbf{Zipper (derivative)} $F'(a)$ \\
+\midrule
+Pair: $a \times a$ & Two-option: $a + a = 2a$ \\
+List: $\frac{1}{1-a}$ & Pair of lists: $L(a)^2 = \frac{1}{(1-a)^2}$ \\
+Binary tree: $\frac{1 - \sqrt{1-4a}}{2a}$ & Sequence of tree contexts \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{keyinsight}
+
+\begin{example}[Derivative of a Triple]
+\[
+\frac{d}{da}(a^3) = 3a^2
+\]
+A triple with one element removed is: a choice of 3 positions to remove, plus the
+remaining 2 elements.  That is $3 \times a^2 = 3a^2$.  The power rule works perfectly.
+\end{example}
+
+% ============================================================
+\section{Making Illegal States Unrepresentable}
+\label{sec:illegal-states}
+% ============================================================
+
+Type algebra is not just aesthetically pleasing --- it is a powerful engineering tool.
+The key insight is:
+
+\begin{keyinsight}[Cardinality and Bug Prevention]
+If the cardinality of your type is \emph{larger} than the number of \emph{valid} states
+in your domain, then some values of your type represent illegal states.
+\textbf{Every gap between the type's cardinality and the valid state space is a potential bug.}
+\end{keyinsight}
+
+\subsection{A Running Example: Network Connection}
+
+Suppose a network connection can be in the following states:
+\begin{itemize}
+  \item \textbf{Disconnected}: no data needed.
+  \item \textbf{Connecting}: we have an IP address (\code{uint32\_t}).
+  \item \textbf{Connected}: we have an IP address (\code{uint32\_t}) and
+        a session token (\code{uint64\_t}).
+\end{itemize}
+
+\paragraph{Bad Design: Using Booleans and Optionals ad hoc.}
+
+\begin{lstlisting}[style=cpp]
+struct Connection {
+    bool is_connecting;
+    bool is_connected;
+    std::optional<uint32_t> ip_address;
+    std::optional<uint64_t> session_token;
+};
+\end{lstlisting}
+
+How many valid states does this have?  Three (as listed above).
+What is the cardinality of this struct?
+
+\begin{align*}
+|\typename{Connection}| &= |\code{bool}| \times |\code{bool}| \times |\code{optional<uint32\_t>}|
+                                         \times |\code{optional<uint64\_t>}| \\
+&= 2 \times 2 \times (2^{32} + 1) \times (2^{64} + 1) \\
+&\approx 4 \times 2^{32} \times 2^{64} = 2^{98}
+\end{align*}
+
+We have about $2^{98}$ possible values, but only 3 valid states.
+Almost every value of this struct is an illegal state --- \code{is\_connecting = true} and
+\code{is\_connected = true} simultaneously, or \code{is\_connected = true} but
+\code{session\_token = nullopt}, etc.
+
+\paragraph{Good Design: Using the Algebra.}
+
+\begin{lstlisting}[style=cpp]
+struct Disconnected {};
+struct Connecting { uint32_t ip; };
+struct Connected  { uint32_t ip; uint64_t session_token; };
+
+using Connection = std::variant<Disconnected, Connecting, Connected>;
+
+// Cardinality:
+// |Disconnected| = 1
+// |Connecting|   = 2^32
+// |Connected|    = 2^32 * 2^64 = 2^96
+// |Connection|   = 1 + 2^32 + 2^96
+\end{lstlisting}
+
+Every value of \code{Connection} is a valid state.
+There are no illegal states to represent.
+The compiler enforces the invariants --- you simply cannot construct an invalid connection.
+
+\begin{cppconnection}[std::visit Forces You to Handle All Cases]
+With \code{std::variant}, you must handle all alternatives when using \code{std::visit}.
+The compiler will warn (or error) if you miss a case.  This is type algebra enforcing
+correctness:
+
+\begin{lstlisting}[style=cpp]
+void handle(Connection const& conn) {
+    std::visit([](auto const& state) {
+        using T = std::decay_t<decltype(state)>;
+        if constexpr (std::is_same_v<T, Disconnected>) {
+            // handle disconnected
+        } else if constexpr (std::is_same_v<T, Connecting>) {
+            // handle connecting, state.ip is available
+        } else if constexpr (std::is_same_v<T, Connected>) {
+            // handle connected, state.ip and state.session_token available
+        }
+    }, conn);
+}
+\end{lstlisting}
+\end{cppconnection}
+
+\subsection{The General Principle}
+
+\begin{definition}[Make Illegal States Unrepresentable]
+A type design \textbf{makes illegal states unrepresentable} if the cardinality of the
+type equals the number of valid states in the domain.  Equivalently, there is no way
+to construct a value of the type that does not correspond to a valid domain state.
+\end{definition}
+
+To achieve this:
+\begin{enumerate}
+  \item Count the valid states in your domain.
+  \item Design your type using sum types for alternatives and product types for simultaneous data.
+  \item Verify that the cardinality of your type matches the number of valid states.
+  \item If the cardinalities match, you have no illegal states.
+\end{enumerate}
+
+\begin{example}[A Form with Validation States]
+A form field can be: empty, being edited with some text, or submitted with validated text.
+
+\begin{lstlisting}[style=cpp]
+struct Empty    {};
+struct Editing  { std::string current_text; };
+struct Submitted { std::string validated_text; };
+
+using FormField = std::variant<Empty, Editing, Submitted>;
+// Every value is valid. No flags. No nulls. No illegal states.
+\end{lstlisting}
+\end{example}
+
+% ============================================================
+\section{The Semiring of Types}
+\label{sec:semiring}
+% ============================================================
+
+Let us step back and appreciate the formal structure we have uncovered.
+
+\begin{definition}[Semiring]
+A \textbf{semiring} is a set $S$ equipped with two operations $+$ and $\times$ satisfying:
+\begin{itemize}
+  \item $(S, +, 0)$ is a commutative monoid (addition, with identity $0$).
+  \item $(S, \times, 1)$ is a monoid (multiplication, with identity $1$).
+  \item Multiplication distributes over addition.
+  \item $0 \times a = a \times 0 = 0$ (annihilation).
+\end{itemize}
+(Unlike a ring, we do \emph{not} require additive inverses --- subtraction is not required.)
+\end{definition}
+
+\begin{keyinsight}[Types Form a Semiring]
+Types (considered up to isomorphism) with $+$ (sum) and $\times$ (product) form a
+\textbf{commutative semiring}:
+\begin{itemize}
+  \item $\Void$ is the additive identity ($A + \Void \cong A$).
+  \item $\Unit$ is the multiplicative identity ($A \times \Unit \cong A$).
+  \item $+$ is commutative and associative.
+  \item $\times$ is commutative and associative.
+  \item Distributive law holds: $A \times (B + C) \cong A \times B + A \times C$.
+  \item $A \times \Void \cong \Void$ (annihilation).
+\end{itemize}
+This is exactly the algebraic structure of the natural numbers $\mathbb{N}$ --- also a
+commutative semiring!
+\end{keyinsight}
+
+The natural numbers and the types are not just analogous semirings --- there is a
+\emph{semiring homomorphism} from types to $\mathbb{N}$: the cardinality function $|\cdot|$.
+It preserves both operations:
+\[
+|A + B| = |A| + |B| \qquad |A \times B| = |A| \times |B| \qquad |\Void| = 0 \qquad |\Unit| = 1
+\]
+
+\subsection{A Glimpse of Category Theory}
+
+The formal setting for type algebra is \textbf{category theory}.
+In the category of types (sometimes written $\mathbf{Set}$, or $\mathbf{Type}$ for dependent types):
+
+\begin{itemize}
+  \item \textbf{Objects} are types.
+  \item \textbf{Morphisms} are functions between types.
+  \item \textbf{Products} in the categorical sense are exactly product types $A \times B$.
+  \item \textbf{Coproducts} in the categorical sense are exactly sum types $A + B$.
+  \item \textbf{Exponentials} in the categorical sense are exactly function types $A \to B$.
+\end{itemize}
+
+A category with all three structures (products, coproducts, and exponentials) is called a
+\textbf{bicartesian closed category}.
+This is the categorical home of functional programming.
+
+The Curry--Howard correspondence goes further: propositions in logic correspond to types,
+and proofs correspond to programs.  The algebraic structure of types reflects the logical
+connectives:
+\[
+A \times B \leftrightarrow A \wedge B \qquad A + B \leftrightarrow A \vee B \qquad A \to B \leftrightarrow A \Rightarrow B
+\]
+
+We will explore these connections in Chapter~12.
+
+% ============================================================
+\section{Summary of Type Arithmetic}
+\label{sec:type-arithmetic-summary}
+% ============================================================
+
+Let us collect everything we have learned into one place.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{p{3.5cm}p{3.5cm}p{5.5cm}}
+\toprule
+\textbf{Arithmetic fact} & \textbf{Type-level version} & \textbf{C++ / Haskell} \\
+\midrule
+$0$ & $\Void$ / \code{never} & Uninhabited type \\
+$1$ & $\Unit$ & \code{struct Unit \{\}; void} \\
+$a + b$ & $A + B$ & \code{std::variant<A,B>} \\
+$a \times b$ & $A \times B$ & \code{struct \{A; B;\}} \\
+$b^a$ & $A \to B$ & \code{std::function<B(A)>} \\
+\midrule
+$n+0=n$ & $A+\Void\cong A$ & Variant with never alt \\
+$n\times 1=n$ & $A\times\Unit\cong A$ & Struct with trivial field \\
+$n\times 0=0$ & $A\times\Void\cong\Void$ & Struct with never field \\
+$n^1=n$ & $\Unit{\to}A\cong A$ & Thunk $\cong$ value \\
+$1^n=1$ & $A{\to}\Unit\cong\Unit$ & Unique discard function \\
+$a(b+c)=ab+ac$ & Distributive law & Distribute variant out \\
+$(c^b)^a=c^{ab}$ & Currying & \code{curry}/\code{uncurry} \\
+$c^{a+b}=c^a c^b$ & Case split & \code{std::visit} \\
+\midrule
+$\frac{d}{da}(a^n)=na^{n-1}$ & Derivative = hole context & Zipper data structure \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Exercises}
+\label{sec:ch8-exercises}
+% ============================================================
+
+\begin{exercise}[Cardinality Calculations]
+Compute the cardinality of each of the following types.  Show your work.
+\begin{enumerate}[label=(\alph*)]
+  \item \code{std::pair<bool, bool>}
+  \item \code{std::tuple<bool, bool, bool>}
+  \item \code{std::optional<std::optional<bool>>}
+  \item \code{std::variant<bool, bool, uint8\_t>}
+        (careful: two \code{bool} alternatives are distinct alternatives)
+  \item \code{std::function<bool(bool)>}
+  \item \code{std::function<std::optional<bool>(bool)>}
+  \item A struct with fields: \code{uint8\_t x; bool flag; std::optional<uint8\_t> y;}
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Verifying Algebraic Identities]
+For each identity below, write a C++ function pair that witnesses the isomorphism
+(i.e., two functions that are mutual inverses).
+\begin{enumerate}[label=(\alph*)]
+  \item $A \times B \cong B \times A$ (commutativity of product)
+  \item $(A \times B) \times C \cong A \times (B \times C)$ (associativity of product)
+  \item $A \times (B + C) \cong (A \times B) + (A \times C)$ (distributive law)
+  \item $(C^B)^A \cong C^{A \times B}$ (currying, use \code{A = bool}, \code{B = bool}, \code{C = uint8\_t})
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Listing All Functions]
+List all distinct functions of type $\code{bool} \to \code{std::optional<bool>}$.
+How many are there?  (Compute the cardinality first, then enumerate them.)
+\end{exercise}
+
+\begin{exercise}[ADT Algebra]
+Consider the binary tree type:
+\begin{lstlisting}[style=haskell]
+data Tree a = Leaf | Branch (Tree a) a (Tree a)
+\end{lstlisting}
+\begin{enumerate}[label=(\alph*)]
+  \item Write the algebraic equation $T(a) = \ldots$ for this type.
+  \item How many binary trees with exactly 3 elements of type $a$ are there?
+        (This is a Catalan number --- identify which one.)
+  \item What is $T'(a)$, the derivative of the tree type?
+        Describe in words what the one-hole context of a tree looks like.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Making Illegal States Unrepresentable]
+A vending machine can be in the following states:
+\begin{itemize}
+  \item \textbf{Idle}: waiting for a coin.
+  \item \textbf{CoinInserted(amount: uint16\_t)}: coin has been inserted, waiting for selection.
+  \item \textbf{Dispensing(item: uint8\_t)}: dispensing item number \code{item}.
+  \item \textbf{OutOfOrder}: machine is broken.
+\end{itemize}
+\begin{enumerate}[label=(\alph*)]
+  \item Design a type using \code{std::variant} that has exactly these four states.
+  \item Compute the cardinality of your type.
+  \item Now consider the ``bad'' design: a struct with a \code{bool} for each state and
+        \code{optional} fields for the data.  Compute its cardinality.  How many times
+        larger is it than the valid state space?
+  \item Write a \code{std::visit} handler that prints the current state of the machine.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[The Semiring Laws]
+Verify computationally (using cardinalities with small concrete types) that the semiring
+laws hold.  Let $A = \Bool$ (cardinality 2), $B = \typename{uint8\_t}$ (cardinality 256),
+$C = \Unit$ (cardinality 1).  Compute both sides of each identity numerically:
+\begin{enumerate}[label=(\alph*)]
+  \item $|A \times (B + C)| = |(A \times B) + (A \times C)|$
+  \item $|A^{B+C}| = |A^B| \times |A^C|$
+  \item $|(A^B)^C| = |A^{B \times C}|$
+\end{enumerate}
+\end{exercise}
+
+% ============================================================
+\begin{takeaway}[Chapter 8 Takeaways]
+\begin{itemize}
+  \item \textbf{Cardinality} is the number of values inhabiting a type.
+        $|\Void| = 0$, $|\Unit| = 1$, $|\Bool| = 2$, $|\typename{uint8\_t}| = 256$.
+
+  \item \textbf{Product types multiply cardinalities}: $|A \times B| = |A| \times |B|$.
+        This is why struct types are called \emph{product} types.
+
+  \item \textbf{Sum types add cardinalities}: $|A + B| = |A| + |B|$.
+        This is why variant types are called \emph{sum} types.
+
+  \item \textbf{Function types exponentiate cardinalities}: $|A \to B| = |B|^{|A|}$.
+        This is why function types are called \emph{exponential types}.
+
+  \item \textbf{All algebraic identities hold} for types: distributive law, commutativity,
+        associativity, identity elements, annihilation.  Each corresponds to a type
+        isomorphism witnessed by real code.
+
+  \item \textbf{Algebraic Data Types} (ADTs) in Haskell and ML are built on exactly this
+        arithmetic.  The list type satisfies $L = 1 + a \cdot L$, whose formal solution
+        is the geometric series $1 + a + a^2 + \cdots$.
+
+  \item \textbf{Types can be differentiated}.  The derivative of a type is the type of its
+        one-hole contexts, leading directly to \emph{zipper} data structures.
+
+  \item \textbf{Types form a commutative semiring}, with the same algebraic structure as
+        the natural numbers.  The cardinality function is a semiring homomorphism from
+        types to $\mathbb{N}$.
+
+  \item \textbf{Make illegal states unrepresentable}: count the valid states, match the
+        type cardinality to that count.  Use sum types for mutually exclusive alternatives.
+        Every mismatch between the type cardinality and the valid state space is a
+        potential source of bugs.
+
+  \item \textbf{The connection goes deeper}: type algebra is the tip of a categorical
+        iceberg.  Products, coproducts, and exponentials in category theory correspond
+        exactly to structs, variants, and functions in programming.
+\end{itemize}
+\end{takeaway}

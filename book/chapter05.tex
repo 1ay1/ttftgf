@@ -1,0 +1,1439 @@
+﻿% ============================================================
+%  Chapter 5: Parametric Polymorphism ---'' One Function, Many Types
+%  Type Theory from the Ground Up
+% ============================================================
+
+\chapter{Parametric Polymorphism: One Function, Many Types}
+\label{ch:polymorphism}
+
+\begin{keyinsight}[What This Chapter Is About]
+Up to this point every function we have written has a fixed, concrete type.
+\code{add} operates on \Nat{}; \code{not} operates on \Bool{}.
+This chapter tears down that limitation.
+We introduce \textbf{parametric polymorphism}: the ability to write a single
+function that works identically and correctly for \emph{every possible type}.
+This is the theoretical foundation of C++ templates, Haskell type variables,
+Java generics, and Rust's monomorphized generics.
+By the end of this chapter you will understand not just \emph{how} to use
+templates, but \emph{why} they are safe, what the type $\forall\alpha.\,\alpha\to\alpha$
+truly means, and why knowing a function's type can tell you exactly what
+that function does --- before you ever read its body.
+\end{keyinsight}
+
+% ============================================================
+\section{The Problem: Death by Duplication}
+\label{sec:duplication}
+
+Suppose you need a function that swaps two values in a pair.
+Easy enough in C++:
+
+\begin{lstlisting}[style=cpp, caption={swap for \texttt{int}}]
+void swap_int(int& a, int& b) {
+    int temp = a;
+    a = b;
+    b = temp;
+}
+\end{lstlisting}
+
+Now your colleague needs the same function for \texttt{double}.
+No problem --- you copy, paste, rename:
+
+\begin{lstlisting}[style=cpp, caption={swap for \texttt{double} --- identical logic, different type}]
+void swap_double(double& a, double& b) {
+    double temp = a;
+    a = b;
+    b = temp;
+}
+\end{lstlisting}
+
+A third colleague needs it for \texttt{std::string}.
+You do it again:
+
+\begin{lstlisting}[style=cpp, caption={swap for \texttt{std::string} --- third copy of the same idea}]
+void swap_string(std::string& a, std::string& b) {
+    std::string temp = a;
+    a = b;
+    b = temp;
+}
+\end{lstlisting}
+
+Look at those three functions.
+Strip away the type names and they are \emph{byte-for-byte identical}.
+Every line of logic is the same.
+The only thing that changes is the word \texttt{int}, \texttt{double}, or
+\texttt{std::string}.
+
+This is embarrassing.
+Worse, it is dangerous:
+\begin{itemize}
+  \item If you find a bug in the logic, you must fix it in three places --- and
+        you will inevitably miss one.
+  \item If a fourth type appears (\texttt{Point}, \texttt{Matrix}, \texttt{UUID},
+        \ldots), you must write yet another copy.
+  \item The codebase grows without adding any new \emph{ideas}.
+\end{itemize}
+
+The root cause is that our type system, as developed in the previous chapter
+(Simply Typed Lambda Calculus, STLC), forces every term to have one single,
+completely determined type.
+When we write $\lambda x : \mathsf{Int}.\; x$, the type of $x$ is locked to
+$\mathsf{Int}$ forever.
+We need a way to leave the type \emph{unspecified} --- to say
+``$x$ has whatever type you decide to give it.''
+That is exactly what type variables provide.
+
+\begin{intuition}
+Think about how numbers work in ordinary mathematics.
+When a textbook writes $f(x) = x^2 + 1$, the variable $x$ does not stand for
+any particular number.
+It stands for \emph{any} number, and the equation is true for all of them.
+Type variables do the same thing for types: they stand for \emph{any} type,
+and the function works correctly for all of them.
+\end{intuition}
+
+% ============================================================
+\section{The Idea: Types Can Have Variables}
+\label{sec:type-variables}
+
+In STLC (Chapter 4) our type grammar was:
+\[
+  \tau \;::=\; \mathsf{Int} \mid \mathsf{Bool} \mid \mathsf{Unit}
+              \mid \tau_1 \to \tau_2
+\]
+Every type was built from concrete base types.
+
+Now we add \textbf{type variables}, written with lowercase Greek letters
+$\alpha, \beta, \gamma, \ldots$\,:
+\[
+  \tau \;::=\; \alpha \mid \mathsf{Int} \mid \mathsf{Bool} \mid \mathsf{Unit}
+              \mid \tau_1 \to \tau_2
+\]
+A type variable is a placeholder.
+When I write $\alpha \to \alpha$ I mean ``a function from some type to that
+same type'' --- but I have not yet said which type $\alpha$ is.
+
+\medskip
+
+The identity function for integers is $\lambda x:\mathsf{Int}.\; x$, with type
+$\mathsf{Int} \to \mathsf{Int}$.
+The identity function for booleans is $\lambda x:\mathsf{Bool}.\; x$, with type
+$\mathsf{Bool} \to \mathsf{Bool}$.
+They are the same idea expressed twice.
+
+What we \emph{want} to write is something like:
+\[
+  \lambda x : \alpha.\; x \qquad \text{with type } \alpha \to \alpha
+\]
+But who decides what $\alpha$ is?
+We need a way to \emph{introduce} a type variable and \emph{bind} it,
+just as $\lambda$ introduces and binds a term variable.
+This is what the \textbf{big lambda} $\Lambda$ does.
+
+\begin{definition}[Type Abstraction]
+If $e$ is a term that may refer to a free type variable $\alpha$, then
+$\Lambda \alpha.\; e$ is a \textbf{type abstraction}: a term that, when given a
+concrete type $T$, substitutes $T$ for $\alpha$ throughout $e$.
+We call $\alpha$ the \textbf{type parameter} of the abstraction.
+\end{definition}
+
+The polymorphic identity function is written:
+\[
+  \mathsf{id} \;\triangleq\; \Lambda \alpha.\; \lambda x : \alpha.\; x
+\]
+Read this as: ``For any type $\alpha$, given a value $x$ of type $\alpha$,
+return $x$.''
+
+What is its type?
+It is:
+\[
+  \mathsf{id} : \forall \alpha.\; \alpha \to \alpha
+\]
+The $\forall$ (``for all'') quantifier is the type-level counterpart of $\Lambda$.
+Just as $\Lambda \alpha$ in the term says ``I accept any type'',
+$\forall \alpha$ in the type says ``this holds for all types.''
+
+% ============================================================
+\section{System F: The Polymorphic Lambda Calculus}
+\label{sec:system-f}
+
+The formal system that adds type abstraction and quantification to STLC is
+called \textbf{System F}, introduced independently by Jean-Yves Girard (1972)
+in the context of proof theory and John C.\ Reynolds (1974) in the context of
+programming languages.
+It is also called the \textbf{polymorphic lambda calculus} or
+\textbf{second-order lambda calculus}.
+
+\subsection{Syntax of System F}
+
+\textbf{Types} in System F:
+\[
+  \tau \;::=\; \alpha \;\mid\; \tau_1 \to \tau_2 \;\mid\; \forall \alpha.\; \tau
+\]
+
+\begin{itemize}
+  \item $\alpha$ --- a type variable (placeholder for any type).
+  \item $\tau_1 \to \tau_2$ --- function type, as in STLC.
+  \item $\forall \alpha.\; \tau$ --- universal type: ``for all types $\alpha$,
+        the type $\tau$ (which may mention $\alpha$).''
+\end{itemize}
+
+\textbf{Terms} in System F:
+\[
+  e \;::=\; x \;\mid\; \lambda x:\tau.\; e \;\mid\; e_1\; e_2
+            \;\mid\; \Lambda \alpha.\; e \;\mid\; e\;[\tau]
+\]
+
+\begin{itemize}
+  \item $x$ --- a term variable (as in STLC).
+  \item $\lambda x:\tau.\; e$ --- term abstraction (as in STLC).
+  \item $e_1\; e_2$ --- term application (as in STLC).
+  \item $\Lambda \alpha.\; e$ --- \textbf{type abstraction}: introduces a type
+        variable $\alpha$ that $e$ may use.
+  \item $e\;[\tau]$ --- \textbf{type application}: supplies a concrete type
+        $\tau$ to a type abstraction, instantiating $\alpha$ with $\tau$.
+\end{itemize}
+
+So System F has two kinds of application and two kinds of abstraction,
+corresponding to the two levels --- terms and types:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Level & Abstraction & Application \\
+\midrule
+Terms  & $\lambda x:\tau.\;e$ & $e_1\;e_2$   \\
+Types  & $\Lambda\alpha.\;e$ & $e\;[\tau]$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Typing Rules}
+
+The typing rules of System F extend those of STLC with two new rules.
+
+\textbf{Type Abstraction} (introduction of $\forall$):
+\[
+  \frac{\Gamma,\, \alpha \;\vdash\; e : \tau}
+       {\Gamma \;\vdash\; \Lambda\alpha.\;e \;:\; \forall\alpha.\;\tau}
+  \quad (\alpha \notin \mathrm{FTV}(\Gamma))
+\]
+If we can type $e$ as $\tau$ in a context extended with a fresh type variable
+$\alpha$, then $\Lambda\alpha.\;e$ has type $\forall\alpha.\;\tau$.
+The side condition $\alpha \notin \mathrm{FTV}(\Gamma)$ says $\alpha$ must be
+genuinely fresh --- we cannot accidentally capture a type variable that is already
+in scope.
+
+\textbf{Type Application} (elimination of $\forall$):
+\[
+  \frac{\Gamma \;\vdash\; e \;:\; \forall\alpha.\;\tau}
+       {\Gamma \;\vdash\; e\;[\sigma] \;:\; \tau[\alpha \mapsto \sigma]}
+\]
+If $e$ has type $\forall\alpha.\;\tau$, then applying it to a concrete type
+$\sigma$ yields $\tau$ with $\sigma$ substituted for $\alpha$.
+
+\begin{example}[Typing the polymorphic identity]
+Let us typecheck $\mathsf{id} = \Lambda\alpha.\;\lambda x:\alpha.\;x$ step by step.
+
+\textbf{Step 1.} Work inside the $\Lambda$.
+In context $\Gamma = \{\alpha\}$ (a fresh type variable), consider
+$\lambda x:\alpha.\;x$.
+\begin{itemize}
+  \item The context extended with $x:\alpha$ is $\Gamma' = \{\alpha, x:\alpha\}$.
+  \item In $\Gamma'$, the variable $x$ has type $\alpha$.
+  \item So $\lambda x:\alpha.\;x$ has type $\alpha \to \alpha$ in context
+        $\{\alpha\}$.
+\end{itemize}
+
+\textbf{Step 2.} Apply the type abstraction rule.
+Since $\lambda x:\alpha.\;x : \alpha \to \alpha$ in context $\{\alpha\}$,
+the term $\Lambda\alpha.\;\lambda x:\alpha.\;x$ has type
+$\forall\alpha.\;\alpha \to \alpha$ in the empty context.
+
+\textbf{Step 3.} Instantiate.
+Applying $\mathsf{id}$ to the type $\mathsf{Int}$:
+\[
+  \mathsf{id}\;[\mathsf{Int}] \;:\; \mathsf{Int} \to \mathsf{Int}
+\]
+We substitute $\mathsf{Int}$ for $\alpha$ in $\alpha \to \alpha$, giving
+$\mathsf{Int} \to \mathsf{Int}$.
+Now applying to a value:
+\[
+  \mathsf{id}\;[\mathsf{Int}]\;42 \;:\; \mathsf{Int}
+\]
+Evaluating: $(\Lambda\alpha.\;\lambda x:\alpha.\;x)\;[\mathsf{Int}]\;42$
+reduces first to $(\lambda x:\mathsf{Int}.\;x)\;42$, then to $42$.
+\end{example}
+
+\subsection{More Examples in System F}
+
+\begin{example}[Polymorphic constant function]
+\[
+  \mathsf{const} \;\triangleq\; \Lambda\alpha.\;\Lambda\beta.\;\lambda x:\alpha.\;\lambda y:\beta.\;x
+\]
+\[
+  \mathsf{const} \;:\; \forall\alpha.\;\forall\beta.\;\alpha \to \beta \to \alpha
+\]
+``For any two types $\alpha$ and $\beta$, given an $x:\alpha$ and a $y:\beta$,
+return $x$.''
+
+Instantiation: $\mathsf{const}\;[\mathsf{Int}]\;[\mathsf{Bool}]\;42\;\mathsf{true}$
+reduces to $42$.
+\end{example}
+
+\begin{example}[Polymorphic function composition]
+\[
+  \mathsf{compose} \;\triangleq\;
+  \Lambda\alpha.\;\Lambda\beta.\;\Lambda\gamma.\;
+  \lambda f:\beta\to\gamma.\;\lambda g:\alpha\to\beta.\;\lambda x:\alpha.\;
+  f\;(g\;x)
+\]
+\[
+  \mathsf{compose} \;:\;
+  \forall\alpha.\;\forall\beta.\;\forall\gamma.\;
+  (\beta\to\gamma) \to (\alpha\to\beta) \to \alpha \to \gamma
+\]
+This is the polymorphic $(.)$ operator of Haskell.
+Notice that three type variables are needed because composition bridges three
+potentially different types.
+\end{example}
+
+\begin{example}[Polymorphic flip]
+\[
+  \mathsf{flip} \;\triangleq\;
+  \Lambda\alpha.\;\Lambda\beta.\;\Lambda\gamma.\;
+  \lambda f:\alpha\to\beta\to\gamma.\;\lambda y:\beta.\;\lambda x:\alpha.\;
+  f\;x\;y
+\]
+\[
+  \mathsf{flip} \;:\;
+  \forall\alpha.\;\forall\beta.\;\forall\gamma.\;
+  (\alpha\to\beta\to\gamma) \to \beta \to \alpha \to \gamma
+\]
+\code{flip} takes a two-argument function and swaps its arguments.
+\end{example}
+
+\begin{keyinsight}[The Big Picture of System F]
+System F is STLC with one new idea: functions can abstract over types, not just
+over values.
+A $\Lambda$ in a term corresponds to a $\forall$ in its type.
+Everything else --- reduction, type safety, progress and preservation --- carries
+over from STLC essentially unchanged.
+System F is expressive enough to define booleans, natural numbers, lists, and
+many other data types purely from function types --- a remarkable fact we will
+hint at in the exercises.
+\end{keyinsight}
+
+% ============================================================
+\section{The \texorpdfstring{$\forall$}{forall} Quantifier in Depth}
+\label{sec:forall}
+
+The symbol $\forall$ should be familiar from logic.
+In first-order logic, $\forall x.\; P(x)$ says ``for all individuals $x$,
+the property $P$ holds of $x$.''.
+
+In System F, $\forall \alpha.\; \tau$ says ``for all \emph{types} $\alpha$,
+the type expression $\tau$ (which may mention $\alpha$) describes a valid type.''
+We are quantifying not over individuals, but over \emph{types themselves}.
+This is why System F is called \emph{second-order} --- it quantifies over a
+higher domain than first-order systems do.
+
+\medskip
+
+Let us unpack several $\forall$ types to build intuition:
+
+\begin{center}
+\begin{tabular}{p{5.5cm}p{7cm}}
+\toprule
+Type & Plain-English Reading \\
+\midrule
+$\forall\alpha.\;\alpha\to\alpha$
+  & For any type $\alpha$, a function from $\alpha$ to $\alpha$.
+    (The identity function, or any function of this shape.) \\[6pt]
+$\forall\alpha.\;\alpha\to\alpha\to\alpha$
+  & For any type $\alpha$, a function that takes two $\alpha$s and returns an $\alpha$.
+    (Could be ``return the first'' or ``return the second.'') \\[6pt]
+$\forall\alpha.\;\forall\beta.\;\alpha\to\beta\to\alpha$
+  & For any types $\alpha$ and $\beta$, take an $\alpha$ and a $\beta$,
+    return an $\alpha$.  (This is \code{const}.) \\[6pt]
+$\forall\alpha.\;(\alpha\to\alpha)\to\alpha\to\alpha$
+  & For any type $\alpha$, take a function $\alpha\to\alpha$ and a starting
+    value $\alpha$, return an $\alpha$.
+    (This is the type of Church numerals --- natural number $n$ applies its
+    argument function $n$ times!) \\[6pt]
+$\forall\alpha.\;\alpha$
+  & For any type $\alpha$, give me a value of type $\alpha$. This is an
+    extraordinary claim --- and in System F it is uninhabited. Only $\bot$
+    (the empty type, \Void) has this property in a consistent system. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip
+
+\begin{warning}[Quantification Order Matters]
+$\forall\alpha.\;\forall\beta.\;\alpha\to\beta$ and
+$\forall\beta.\;\forall\alpha.\;\alpha\to\beta$ are logically equivalent here
+(the two $\forall$s commute when there is no dependency between them), but in
+general the position of $\forall$ inside a type is crucial.
+We will see this when we discuss Rank-N polymorphism in Section~\ref{sec:rankn}.
+\end{warning}
+
+\subsection{Scope of Type Variables}
+
+A type variable $\alpha$ bound by $\forall\alpha$ is in scope for the entire
+body of that $\forall$.
+Concretely:
+\[
+  \forall\alpha.\;\underbrace{(\alpha \to \alpha) \to \alpha \to \alpha}_{\text{scope of }\alpha}
+\]
+Alpha-renaming works for type variables just as for term variables.
+$\forall\alpha.\;\alpha\to\alpha$ and $\forall\beta.\;\beta\to\beta$ are
+\emph{the same type} --- they differ only in the name chosen for the bound
+variable.
+
+% ============================================================
+\section{Parametricity and Theorems for Free}
+\label{sec:parametricity}
+
+Here is one of the most beautiful theorems in all of type theory, due to
+Philip Wadler (1989), building on earlier work by John Reynolds.
+The idea is sometimes called \textbf{parametricity} or, colloquially,
+\textbf{theorems for free}.
+
+\begin{keyinsight}[The Core Idea of Parametricity]
+In a language with parametric polymorphism and no other ``escape hatches''
+(no casts, no \code{typeof}, no reflection), a function of type
+$\forall\alpha.\;\tau$ \emph{cannot look at} what type $\alpha$ actually is.
+It must treat $\alpha$ as a completely opaque token.
+This severely constrains what the function can do --- so severely that often the
+\emph{type alone} uniquely determines the function's behavior, up to a small
+finite set of possibilities.
+You get a theorem about the function \emph{for free}, without reading its code.
+\end{keyinsight}
+
+\subsection{Example: The Only Resident of \texorpdfstring{$\forall\alpha.\;\alpha\to\alpha$}{forall a. a -> a}}
+
+Consider the type $\forall\alpha.\;\alpha\to\alpha$.
+A function of this type:
+\begin{itemize}
+  \item Receives a value $x$ of some completely unknown type $\alpha$.
+  \item Cannot pattern match on it (it has no known structure).
+  \item Cannot create a new value of type $\alpha$ from thin air (it has no
+        constructor for $\alpha$).
+  \item Cannot call any function on $x$ (it has no knowledge of what operations
+        $\alpha$ supports).
+  \item Therefore the \emph{only thing} it can do with $x$ is return it
+        unchanged.
+\end{itemize}
+
+\textbf{Theorem (free):} Every total function of type $\forall\alpha.\;\alpha\to\alpha$
+is the identity function.
+
+This is extraordinary.
+You do not need to read the function body.
+The type tells you everything.
+
+\subsection{Example: Two Residents of \texorpdfstring{$\forall\alpha.\;\alpha\to\alpha\to\alpha$}{forall a. a -> a -> a}}
+
+A function of type $\forall\alpha.\;\alpha\to\alpha\to\alpha$ takes two values
+of the same unknown type and returns one of them.
+Since it cannot inspect the values or create new ones, it must return one of the
+two arguments.
+There are exactly two such functions: ``return the first'' and ``return the
+second.''
+\[
+  \mathsf{fst} = \Lambda\alpha.\;\lambda x:\alpha.\;\lambda y:\alpha.\;x
+  \qquad
+  \mathsf{snd} = \Lambda\alpha.\;\lambda x:\alpha.\;\lambda y:\alpha.\;y
+\]
+
+\textbf{Theorem (free):} Every total function of type
+$\forall\alpha.\;\alpha\to\alpha\to\alpha$ is either $\mathsf{fst}$ or
+$\mathsf{snd}$.
+
+You have learned something about the function's behavior from its type alone,
+before reading a single line of implementation.
+
+\subsection{More Theorems for Free}
+
+\begin{example}[Reversing a list]
+Suppose $f : \forall\alpha.\;\mathsf{List}\;\alpha \to \mathsf{List}\;\alpha$.
+Parametricity tells us:
+\[
+  f\;(\mathsf{map}\;h\;\ell) \;=\; \mathsf{map}\;h\;(f\;\ell)
+\]
+for any function $h$ and list $\ell$.
+In other words, $f$ commutes with \code{map}: it does not matter whether
+you transform the elements before or after applying $f$.
+Any operation that can only rearrange, duplicate, or discard list elements
+must satisfy this equation.
+The canonical example: list reversal.
+\end{example}
+
+\begin{example}[Polymorphic pairs]
+If $f : \forall\alpha.\;\forall\beta.\;\alpha \to \beta \to (\alpha \times \beta)$,
+then parametricity forces $f$ to be the pairing function $(x, y) \mapsto (x, y)$.
+It cannot reorder, cannot drop an element, cannot synthesize anything new.
+\end{example}
+
+\begin{warning}[Parametricity Requires Discipline]
+These ``free theorems'' hold only in languages where polymorphic functions are
+truly parametric --- they cannot inspect or cast the type variable.
+In C++, you can break parametricity with \code{if constexpr}, partial template
+specialization, or \code{std::is\_same}.
+Haskell (without \code{unsafeCoerce} and similar) enforces parametricity.
+Java, despite using generics syntax, partly breaks it with reflection.
+The theoretical ideal is purer than any real language, but understanding it
+tells you the cost and meaning of each escape hatch.
+\end{warning}
+
+% ============================================================
+\section{C++ Templates as System F}
+\label{sec:templates-system-f}
+
+We are now in a position to explain C++ templates with complete theoretical
+precision.
+
+\begin{cppconnection}[Templates ARE Type Abstraction]
+A C++ function template is a System F type abstraction.
+\begin{lstlisting}[style=cpp]
+template<typename T>
+T identity(T x) {
+    return x;
+}
+\end{lstlisting}
+This is exactly $\mathsf{id} = \Lambda T.\;\lambda x:T.\;x$ with type
+$\forall T.\;T\to T$.
+\begin{itemize}
+  \item \code{template<typename T>} is the $\Lambda T$ binder.
+  \item The parameter type \code{T} in \code{T x} is the type variable $T$ used in the term.
+  \item \code{return x} is the body $x$.
+\end{itemize}
+\end{cppconnection}
+
+\subsection{Template Instantiation is Type Application}
+
+When you call \code{identity<int>(42)}, you are performing a type application
+followed by a term application:
+\[
+  (\Lambda T.\;\lambda x:T.\;x)\;[\mathsf{int}]\;42
+  \;\longrightarrow_\beta\;
+  (\lambda x:\mathsf{int}.\;x)\;42
+  \;\longrightarrow_\beta\;
+  42
+\]
+
+In C++ terms:
+\begin{lstlisting}[style=cpp]
+identity<int>(42);   // type application [int], then term application 42
+identity<double>(3.14);  // type application [double], then term application 3.14
+identity<std::string>(std::string("hello"));
+\end{lstlisting}
+
+Even when you omit the explicit type argument (letting the compiler deduce it),
+you are still performing a type application --- the compiler infers $T =
+\mathsf{int}$ from the argument \code{42} and applies it for you.
+Type inference is just automated type application.
+
+\subsection{More Template Examples as System F}
+
+\begin{example}[Polymorphic swap]
+\[
+  \mathsf{swap} \;\triangleq\;
+  \Lambda T.\;\lambda x:T.\;\lambda y:T.\;(y,\,x)
+  \;:\; \forall T.\;T\to T\to T\times T
+\]
+\begin{lstlisting}[style=cpp]
+template<typename T>
+void swap(T& a, T& b) {
+    T temp = a;
+    a = b;
+    b = temp;
+}
+// swap<int>, swap<double>, swap<string> are all one function at the type level.
+\end{lstlisting}
+\end{example}
+
+\begin{example}[Polymorphic max]
+\[
+  \mathsf{max} \;:\; \forall T.\;(T\to T\to\Bool)\to T\to T\to T
+\]
+\begin{lstlisting}[style=cpp]
+template<typename T>
+T my_max(T a, T b) {
+    return (a > b) ? a : b;
+}
+\end{lstlisting}
+Wait --- this function uses \code{>} on values of type \code{T}.
+Does this break parametricity?
+Yes, it does!
+A \emph{truly} parametric \code{max} cannot compare elements because it knows
+nothing about \code{T}.
+The C++ \code{my\_max} implicitly requires that \code{T} supports \code{>}.
+This is \emph{constrained} polymorphism (or ad-hoc polymorphism), not pure
+parametric polymorphism.
+We will discuss this distinction carefully in Section~\ref{sec:parametric-vs-adhoc}.
+\end{example}
+
+\begin{example}[Polymorphic pair construction]
+\[
+  \mathsf{makePair} \;:\; \forall A.\;\forall B.\;A\to B\to A\times B
+\]
+\begin{lstlisting}[style=cpp]
+template<typename A, typename B>
+std::pair<A, B> make_my_pair(A a, B b) {
+    return std::pair<A, B>(a, b);
+}
+// Two type variables: truly polymorphic in two independent types.
+\end{lstlisting}
+\end{example}
+
+\begin{cppconnection}[Template Type Deduction as Type Inference]
+C++ template argument deduction is a form of type inference.
+When you write \code{std::swap(a, b)} without spelling out the type, the
+compiler infers the type application $[\mathsf{int}]$ from the types of \code{a}
+and \code{b}.
+In Haskell's Hindley-Milner system (a topic for a later chapter), this inference
+is guaranteed to always succeed and find a unique most-general type.
+C++ template deduction is less principled and has many corner cases, but the
+underlying idea is the same.
+\end{cppconnection}
+
+% ============================================================
+\section{Monomorphization: How C++ Compiles Templates}
+\label{sec:monomorphization}
+
+In System F, type application is a purely compile-time operation --- the runtime
+never needs to know what type was chosen.
+C++ implements this in a particularly concrete way: \textbf{monomorphization}.
+
+\begin{definition}[Monomorphization]
+Monomorphization is the process of generating a separate, concrete, fully typed
+copy of a template for each distinct type argument that appears in the program.
+\end{definition}
+
+So if your program uses \code{identity<int>}, \code{identity<double>}, and
+\code{identity<std::string>}, the compiler generates three functions in the
+binary:
+\begin{lstlisting}[style=cpp, caption={Conceptual output after monomorphization}]
+// What the compiler generates (conceptually):
+int   identity_int(int x)              { return x; }
+double identity_double(double x)       { return x; }
+std::string identity_string(std::string x) { return x; }
+\end{lstlisting}
+
+Each generated function is fully monomorphic (no type variables remain).
+The word ``monomorphic'' means ``single shape'' --- each copy has exactly one
+fixed type.
+
+\subsection{Advantages of Monomorphization}
+
+\begin{itemize}
+  \item \textbf{Zero runtime overhead.}  There is no boxing, no type tag, no
+        virtual dispatch.  A call to \code{identity<int>} compiles to the same
+        machine code as a hand-written \code{identity\_int}.
+  \item \textbf{Inlining and optimization.}  The compiler can inline and
+        aggressively optimize each specialization independently.
+        \code{identity<int>} might compile to a single register move; with
+        more complex types the generated code is tuned for that specific type.
+  \item \textbf{Type errors caught at compile time.}  If a type does not support
+        the operations used in the template body, the compiler catches it when
+        instantiating, not at runtime.
+\end{itemize}
+
+\subsection{Disadvantages of Monomorphization}
+
+\begin{itemize}
+  \item \textbf{Code bloat.}  With many types, the binary grows.
+        A heavily templated codebase can produce enormous executables.
+        (Modern linkers and optimizers mitigate this via identical code folding,
+        but it remains a real concern.)
+  \item \textbf{Longer compile times.}  Template instantiation is done by the
+        compiler, not a linker, and can be slow.
+        The infamous ``C++ compile times'' are partly caused by heavy template use.
+  \item \textbf{Templates must live in headers.}  Because the compiler needs the
+        full template definition to instantiate it, templates cannot normally be
+        compiled separately and hidden in a \code{.cpp} file.
+        (Explicit instantiation is one workaround, but it is cumbersome.)
+\end{itemize}
+
+\subsection{Contrast: Java's Type Erasure}
+
+Java generics use a completely different approach: \textbf{type erasure}.
+
+\begin{center}
+\begin{tabular}{p{5cm}p{5cm}}
+\toprule
+C++ Monomorphization & Java Type Erasure \\
+\midrule
+One binary copy per type argument & One binary copy for all type arguments \\
+Type information retained at runtime & Type information erased at runtime \\
+No boxing overhead & All generics operate on \code{Object}; primitives get boxed \\
+Large binary, fast execution & Small binary, runtime overhead \\
+Template errors are verbose & Cleaner error messages \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Java's \code{ArrayList<Integer>} and \code{ArrayList<String>} share the same
+bytecode at runtime --- the type parameter is simply forgotten.
+This means Java cannot have a \code{new T()} inside a generic class (it does not
+know what \code{T} is at runtime), and it cannot create arrays of generic type.
+These are not bugs in Java; they are consequences of a deliberate design choice
+to keep the JVM simple and backward compatible.
+
+Rust, like C++, uses monomorphization, calling its version ``generic instantiation.''
+Go traditionally used a form of dictionary passing (a middle ground), but modern
+Go has moved toward a gcshape-based monomorphization.
+
+% ============================================================
+\section{Polymorphic Data Types}
+\label{sec:polymorphic-data-types}
+
+Polymorphism is not limited to functions.
+\emph{Types themselves} can be parameterized.
+A \textbf{polymorphic type constructor} takes a type as input and produces a
+type as output --- exactly as we discussed in Chapter~3 on type constructors.
+
+\subsection{Lists}
+
+The type of homogeneous lists is not a single type but a \emph{family} of types
+parameterized by the element type:
+\[
+  \mathsf{List} : \Type \to \Type
+\]
+$\mathsf{List}\;\mathsf{Int}$ is a list of integers.
+$\mathsf{List}\;\mathsf{Bool}$ is a list of booleans.
+$\mathsf{List}\;(\mathsf{List}\;\mathsf{Int})$ is a list of lists of integers.
+
+In C++:
+\begin{lstlisting}[style=cpp]
+std::vector<int>           // List Int
+std::vector<bool>          // List Bool
+std::vector<std::vector<int>> // List (List Int)
+\end{lstlisting}
+
+The declaration \code{template<typename T> class vector} is a type-level
+function: it takes a type \code{T} and produces the type \code{vector<T>}.
+
+\subsection{Optional / Maybe}
+
+\[
+  \mathsf{Maybe} : \Type \to \Type
+\]
+$\mathsf{Maybe}\;\alpha$ is either a value of type $\alpha$ (``just $x$'')
+or nothing (``nothing'').
+\begin{lstlisting}[style=cpp]
+std::optional<int>    // Maybe Int: either an int or empty
+std::optional<std::string>   // Maybe String
+\end{lstlisting}
+
+In Haskell:
+\begin{lstlisting}[style=haskell]
+data Maybe a = Nothing | Just a
+-- Maybe :: Type -> Type
+-- Nothing :: Maybe a      (for any a)
+-- Just    :: a -> Maybe a (for any a)
+\end{lstlisting}
+
+The constructors of a polymorphic type are themselves polymorphic functions.
+$\mathsf{Just} : \forall\alpha.\;\alpha \to \mathsf{Maybe}\;\alpha$.
+
+\subsection{Pairs and Products}
+
+\[
+  (\times) : \Type \to \Type \to \Type
+\]
+$\alpha \times \beta$ is a pair.
+Two type parameters are needed because the components can have different types.
+\begin{lstlisting}[style=cpp]
+std::pair<int, std::string>   // Int x String
+std::pair<double, bool>       // Double x Bool
+std::tuple<int, char, float>  // Int x Char x Float (iterated product)
+\end{lstlisting}
+
+\subsection{Binary Trees}
+
+\begin{lstlisting}[style=haskell]
+data Tree a = Leaf | Node (Tree a) a (Tree a)
+-- Tree :: Type -> Type
+-- Leaf :: Tree a
+-- Node :: Tree a -> a -> Tree a -> Tree a
+\end{lstlisting}
+\begin{lstlisting}[style=cpp]
+template<typename T>
+struct Tree {
+    bool is_leaf;
+    T value;                    // only meaningful if not a leaf
+    std::unique_ptr<Tree<T>> left;
+    std::unique_ptr<Tree<T>> right;
+};
+\end{lstlisting}
+
+\begin{definition}[Polymorphic Type Constructor]
+A \textbf{polymorphic type constructor} (or \textbf{parameterized type}) is a
+function from types to types: it takes one or more type parameters and produces
+a new type.
+In System F, such constructions arise from applying type-level abstractions.
+In C++, they correspond to class templates.
+\end{definition}
+
+\begin{keyinsight}[Kinds Are to Types as Types Are to Terms]
+Just as every term has a type, every type has a \textbf{kind}.
+Concrete types (\code{int}, \code{bool}) have kind $*$ (pronounced ``star'').
+Type constructors have arrow kinds:
+\begin{align*}
+  \mathsf{List} &: * \to * \\
+  (\times) &: * \to * \to * \\
+  \mathsf{Int} &: *
+\end{align*}
+This hierarchy (terms $\to$ types $\to$ kinds) will become central in
+later chapters when we study dependent types, where these layers begin to merge.
+\end{keyinsight}
+
+% ============================================================
+\section{Parametric vs.\ Ad-Hoc Polymorphism}
+\label{sec:parametric-vs-adhoc}
+
+The term ``polymorphism'' covers at least two quite different concepts that type
+theory distinguishes sharply.
+
+\begin{definition}[Parametric Polymorphism]
+A function is \textbf{parametrically polymorphic} if it uses each type argument
+in a completely uniform, type-blind way.
+The same code runs for every instantiation; no behavior changes based on the
+type.
+\end{definition}
+
+\begin{definition}[Ad-Hoc Polymorphism]
+A function is \textbf{ad-hoc polymorphic} (also called \textbf{overloaded}) if
+it has different implementations for different types.
+The code that runs \emph{does} depend on the type.
+\end{definition}
+
+\subsection{Examples of Parametric Polymorphism}
+
+\begin{lstlisting}[style=cpp]
+// Purely parametric: the body treats T completely uniformly.
+template<typename T>
+T identity(T x) { return x; }
+
+template<typename T>
+void swap(T& a, T& b) { T t = a; a = b; b = t; }
+
+template<typename T>
+std::pair<T,T> duplicate(T x) { return {x, x}; }
+
+// None of these look at T in any way. They work for ANY T.
+\end{lstlisting}
+
+\subsection{Examples of Ad-Hoc Polymorphism}
+
+\begin{lstlisting}[style=cpp]
+// Function overloading: different code for each type.
+int    abs(int x)    { return x < 0 ? -x : x; }
+double abs(double x) { return x < 0.0 ? -x : x; }
+// Different implementations selected by the type.
+
+// Template specialization: different code for specific types.
+template<typename T>
+std::string toString(T x) { return std::to_string(x); }
+
+template<>
+std::string toString<bool>(bool x) { return x ? "true" : "false"; }
+// For bool, completely different behavior.
+\end{lstlisting}
+
+\subsection{C++ Concepts: Constrained Polymorphism}
+
+\begin{lstlisting}[style=cpp]
+// C++20 concept: constrain which types T can be.
+template<typename T>
+concept Comparable = requires(T a, T b) { { a < b } -> std::convertible_to<bool>; };
+
+template<Comparable T>
+T my_max(T a, T b) { return a < b ? b : a; }
+// This is parametric WITHIN the set of types satisfying Comparable,
+// but not parametric across ALL types.
+\end{lstlisting}
+
+\begin{center}
+\begin{tabular}{p{3.5cm}p{4.5cm}p{4.5cm}}
+\toprule
+& Parametric & Ad-Hoc \\
+\midrule
+Code per type & One shared body & Separate body per type \\
+Behavior by type & Identical & Can differ \\
+Free theorems & Yes & No \\
+C++ mechanism & Unconstrained templates & Overloading, specialization \\
+Haskell mechanism & Polymorphic functions & Type classes \\
+Rust mechanism & Unconstrained generics & Trait implementations \\
+Theory & System F & Various (overloading calculi) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{intuition}
+Think of parametric polymorphism as a recipe that works regardless of what
+ingredient you use.
+The recipe for ``put ingredient in container'' is parametric: it works for any
+ingredient.
+Ad-hoc polymorphism is like having a different recipe for each ingredient:
+``to cook meat, do this; to cook vegetables, do that.''
+Both are useful; but they are different things, and a good type theory
+distinguishes them.
+\end{intuition}
+
+\begin{warning}[C++ Templates Are Not Purely Parametric]
+Vanilla C++ templates appear parametric, but several features break true
+parametricity:
+\begin{itemize}
+  \item \textbf{Template specialization:} you can provide a completely different
+        body for a specific type.
+  \item \textbf{\code{if constexpr}:} compile-time branching on type properties
+        changes behavior per type.
+  \item \textbf{Type traits (\code{std::is\_integral}, etc.):} allow runtime-observable
+        type inspection.
+\end{itemize}
+These are powerful tools, but they trade away free theorems in exchange for
+expressivity.
+Use them knowingly.
+\end{warning}
+
+% ============================================================
+\section{Rank-N Polymorphism}
+\label{sec:rankn}
+
+So far all our $\forall$ quantifiers have appeared at the \emph{outermost} level
+of the type.
+For instance:
+\[
+  \mathsf{id} : \forall\alpha.\;\alpha \to \alpha
+\]
+The $\forall$ is on the outside.
+We call this a \textbf{Rank-1} type.
+
+But there is no rule that stops a $\forall$ from appearing \emph{inside} a
+function type.
+What does that mean?
+
+\subsection{Rank-1 Polymorphism}
+
+A \textbf{Rank-1} type has all $\forall$ quantifiers at the top level (outermost
+position, to the left of all function arrows):
+\[
+  \forall\alpha.\;\alpha \to \alpha
+  \qquad
+  \forall\alpha.\;\forall\beta.\;\alpha \to \beta \to \alpha
+\]
+In Rank-1, the caller of a function decides what type to instantiate.
+Hindley-Milner type inference (the algorithm behind Haskell and ML without
+extensions) supports Rank-1 polymorphism and infers types automatically.
+
+\subsection{Rank-2 Polymorphism}
+
+A \textbf{Rank-2} type has a $\forall$ in the left-hand side (argument position)
+of at least one function arrow:
+\[
+  (\forall\alpha.\;\alpha \to \alpha) \to \mathsf{Int}
+\]
+Read this carefully.
+This is a function whose \emph{argument} is itself polymorphic.
+To call this function, you must supply a value of type $\forall\alpha.\;\alpha\to\alpha$
+--- that is, you supply a polymorphic identity function, and the function body
+can apply it at multiple different types.
+
+A concrete example: suppose you want a function that applies its argument to both
+an integer and a string:
+\[
+  \mathsf{applyTwice} \;:\; (\forall\alpha.\;\alpha\to\alpha) \to \mathsf{Int} \to \mathsf{String} \to \mathsf{Int} \times \mathsf{String}
+\]
+\[
+  \mathsf{applyTwice} \;=\; \lambda f.\;\lambda n.\;\lambda s.\;(f\;[\mathsf{Int}]\;n,\; f\;[\mathsf{String}]\;s)
+\]
+The key point: $f$ is used \emph{at two different types} inside the same
+function body.
+This is impossible with Rank-1 polymorphism, where $f$ would be instantiated
+to a single type at the call site.
+
+\begin{lstlisting}[style=haskell]
+-- Haskell with RankNTypes extension:
+applyTwice :: (forall a. a -> a) -> (Int, String)
+applyTwice f = (f 42, f "hello")
+-- f must work for BOTH Int and String here.
+-- Rank-2 type required.
+
+-- At Rank-1, this does not work: f would be fixed to one type.
+\end{lstlisting}
+
+\subsection{General Rank-N}
+
+The pattern continues.
+Rank-$N$ types have $\forall$ quantifiers nested up to $N$ levels deep on the
+left of function arrows.
+The rank of a type measures how deeply polymorphism is nested.
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Rank & Example & Comment \\
+\midrule
+0 & $\mathsf{Int}$ & Monomorphic \\
+1 & $\forall\alpha.\;\alpha\to\alpha$ & Standard polymorphism \\
+2 & $(\forall\alpha.\;\alpha\to\alpha)\to\mathsf{Int}$ & Polymorphic argument \\
+3 & $((\forall\alpha.\;\alpha\to\alpha)\to\mathsf{Int})\to\mathsf{Bool}$ & Rank-2 argument \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Hindley-Milner (without extensions) handles Rank-1.
+Type inference for Rank-2 is decidable but harder.
+Type inference for Rank-N ($N \geq 3$) is undecidable --- programs must supply
+type annotations.
+Full System F (arbitrary rank) has undecidable type inference, which is why
+practical languages use restricted subsets.
+
+\begin{cppconnection}[Rank-2 in C++]
+C++ does not directly support Rank-2 polymorphism in templates, because template
+parameters are not themselves polymorphic at the call site.
+The closest approximation is passing a \emph{functor with a templated call
+operator}:
+\begin{lstlisting}[style=cpp]
+// A "polymorphic callable" -- behaves like (forall a. a -> a):
+struct PolymorphicIdentity {
+    template<typename T>
+    T operator()(T x) const { return x; }
+};
+
+// A function that uses it at two different types:
+std::pair<int, std::string> apply_twice(PolymorphicIdentity f) {
+    return { f(42), f(std::string("hello")) };
+}
+\end{lstlisting}
+This pattern appears in C++ template metaprogramming and is the idiomatic way to
+pass ``polymorphic lambdas'' to generic algorithms.
+\end{cppconnection}
+
+% ============================================================
+\section{Existential Types}
+\label{sec:existential}
+
+We have spent most of this chapter on \emph{universal} quantification
+($\forall$).
+But there is a dual concept: \textbf{existential quantification} ($\exists$).
+
+\begin{definition}[Existential Type]
+The type $\exists\alpha.\;\tau$ means ``there exists some type $\alpha$ such
+that a value of type $\tau$ (which may mention $\alpha$) can be provided.''
+A value of type $\exists\alpha.\;\tau$ \emph{hides} what $\alpha$ actually is;
+consumers know only that \emph{some} concrete $\alpha$ exists, and that they
+have something of type $\tau$ relative to that hidden $\alpha$.
+\end{definition}
+
+\subsection{The Duality Between \texorpdfstring{$\forall$}{forall} and \texorpdfstring{$\exists$}{exists}}
+
+\begin{center}
+\begin{tabular}{p{6cm}p{6cm}}
+\toprule
+Universal ($\forall$) & Existential ($\exists$) \\
+\midrule
+The \emph{caller} chooses the type & The \emph{implementer} chose the type \\
+Consumer has full flexibility over $\alpha$ & Consumer is blind to what $\alpha$ is \\
+``Works for any type you pick'' & ``Uses some type I pick (but you don't see which)'' \\
+Corresponds to parametric polymorphism & Corresponds to data abstraction / encapsulation \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Abstract Data Types as Existential Types}
+
+Consider a \emph{stack} interface.
+The stack has some internal representation type --- maybe an array, maybe a
+linked list, maybe something exotic.
+Users of the stack do not know or care which.
+They see only the operations:
+\[
+  \mathsf{Stack} \;\triangleq\; \exists\alpha.\;
+  \{ \mathsf{empty} : \alpha,\;
+     \mathsf{push}  : \mathsf{Int} \to \alpha \to \alpha,\;
+     \mathsf{pop}   : \alpha \to \mathsf{Maybe}\;(\mathsf{Int} \times \alpha)
+  \}
+\]
+Here $\alpha$ is the hidden internal state type.
+Users receive a value of this existential type; they know \emph{some} $\alpha$
+is used internally, but they cannot access or depend on its concrete identity.
+This is the theoretical basis for \textbf{abstract data types} (ADTs) and
+\textbf{information hiding}.
+
+\begin{cppconnection}[Existentials in C++]
+Existential types appear throughout C++ in several guises:
+
+\textbf{Virtual base classes / interfaces:}
+\begin{lstlisting}[style=cpp]
+// The internal type is hidden behind the interface.
+// Users see only IStack, not the concrete implementation type.
+class IStack {
+public:
+    virtual void push(int x) = 0;
+    virtual std::optional<int> pop()  = 0;
+    virtual ~IStack() = default;
+};
+
+class ArrayStack : public IStack { /* ... internal array ... */ };
+class ListStack  : public IStack { /* ... internal list  ... */ };
+
+// Client code:
+void use_stack(IStack& s) {
+    s.push(42);
+    // We do NOT know if s is ArrayStack or ListStack.
+    // The internal type is existentially hidden.
+}
+\end{lstlisting}
+
+\textbf{\code{std::any}:}
+\begin{lstlisting}[style=cpp]
+// std::any is (roughly) exists a. a
+// It stores a value of some unknown type.
+std::any x = 42;          // x holds an int
+x = std::string("hello"); // now x holds a string
+// The type 'a' changes, but std::any hides it.
+// Retrieving requires a runtime type check (std::any_cast).
+\end{lstlisting}
+
+\textbf{\code{std::function}:}
+\begin{lstlisting}[style=cpp]
+// std::function<int(int)> is roughly:
+// exists closure_type. { call : closure_type -> int -> int
+//                      , state : closure_type }
+// The internal closure type is erased; only the calling interface is exposed.
+std::function<int(int)> f = [](int x){ return x + 1; };
+std::function<int(int)> g = [capture = 42](int x){ return x + capture; };
+// f and g have the SAME type despite very different internal states.
+\end{lstlisting}
+\end{cppconnection}
+
+\subsection{Packing and Unpacking Existentials}
+
+To create a value of type $\exists\alpha.\;\tau$, you \emph{pack} a concrete
+type $\sigma$ together with a value of $\tau[\alpha\mapsto\sigma]$:
+\[
+  \mathsf{pack}\;\sigma,\;v \;:\; \exists\alpha.\;\tau
+  \quad\text{where } v : \tau[\alpha \mapsto \sigma]
+\]
+To use a value of type $\exists\alpha.\;\tau$, you \emph{unpack} it, receiving
+a fresh type variable $\alpha$ and a value of type $\tau$, without knowing what
+$\alpha$ concretely is:
+\[
+  \mathsf{unpack}\;(\alpha, x) = e_1 \;\mathsf{in}\; e_2
+\]
+In $e_2$, you know $\alpha$ is \emph{some} type, and $x : \tau$, but you cannot
+inspect $\alpha$ further.
+
+\begin{keyinsight}[{The Curry-Howard Correspondence for $\exists$}]
+In the Curry-Howard correspondence, which we will explore in Chapter 10,
+types are propositions and terms are proofs.
+Under this correspondence:
+\begin{itemize}
+  \item $\forall\alpha.\;\tau$ corresponds to a universal proposition: ``for all
+        types $\alpha$, $\tau$ holds.''
+  \item $\exists\alpha.\;\tau$ corresponds to an existential proposition: ``there
+        exists a type $\alpha$ such that $\tau$ holds.''
+\end{itemize}
+A value of $\exists\alpha.\;\tau$ is a \emph{witness} --- it provides the
+evidence that such an $\alpha$ exists, while keeping the witness itself opaque
+to the outside world.
+This is precisely why existential types model information hiding so naturally:
+the implementation is the proof, and proofs can be kept private.
+\end{keyinsight}
+
+% ============================================================
+\section{Putting It All Together: A Taxonomy of Polymorphism}
+\label{sec:taxonomy}
+
+We have now seen enough to organize the landscape of polymorphism:
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.2cm and 2.5cm,
+  box/.style={draw, rounded corners, minimum width=3.5cm, minimum height=0.8cm,
+              text centered, font=\small},
+  label/.style={font=\small\itshape}
+]
+\node[box, fill=blue!10] (poly) {Polymorphism};
+
+\node[box, fill=green!10, below left=of poly] (param) {Parametric};
+\node[box, fill=orange!10, below right=of poly] (adhoc) {Ad-Hoc};
+
+\node[box, fill=green!5,  below=of param, xshift=-1.5cm] (rank1)  {Rank-1 ($\forall$ outside)};
+\node[box, fill=green!5,  below=of param, xshift= 1.5cm] (rankn)  {Rank-N ($\forall$ nested)};
+
+\node[box, fill=orange!5, below=of adhoc, xshift=-1.5cm] (over)  {Overloading};
+\node[box, fill=orange!5, below=of adhoc, xshift= 1.5cm] (spec)  {Specialization};
+
+\draw[->] (poly) -- (param);
+\draw[->] (poly) -- (adhoc);
+\draw[->] (param) -- (rank1);
+\draw[->] (param) -- (rankn);
+\draw[->] (adhoc) -- (over);
+\draw[->] (adhoc) -- (spec);
+\end{tikzpicture}
+\end{center}
+
+And alongside these, existential types give us:
+\begin{itemize}
+  \item \textbf{Type hiding / encapsulation:} $\exists\alpha.\;\tau$
+  \item \textbf{Abstract data types}
+  \item \textbf{Type erasure} (as in \code{std::any}, \code{std::function},
+        Java generics)
+\end{itemize}
+
+% ============================================================
+\section{System F in Practice: Expressiveness}
+\label{sec:system-f-expressiveness}
+
+One remarkable fact about System F deserves mention even if we will not prove
+it fully here.
+
+\textbf{System F can encode all algebraic data types using only $\forall$ and
+function types.}
+
+For example, the boolean type can be encoded as:
+\[
+  \Bool_F \;\triangleq\; \forall\alpha.\;\alpha\to\alpha\to\alpha
+\]
+A boolean is a function that, given any type $\alpha$ and two values of that
+type, returns one of them.
+\[
+  \mathsf{true}_F  \;\triangleq\; \Lambda\alpha.\;\lambda t:\alpha.\;\lambda f:\alpha.\;t
+  \qquad
+  \mathsf{false}_F \;\triangleq\; \Lambda\alpha.\;\lambda t:\alpha.\;\lambda f:\alpha.\;f
+\]
+And \code{if-then-else} becomes:
+\[
+  \mathsf{if}\;b\;\mathsf{then}\;e_1\;\mathsf{else}\;e_2
+  \;=\;
+  b\;[\tau]\;e_1\;e_2
+\]
+where $\tau$ is the type of $e_1$ and $e_2$.
+
+Natural numbers (Church numerals):
+\[
+  \Nat_F \;\triangleq\; \forall\alpha.\;(\alpha\to\alpha)\to\alpha\to\alpha
+\]
+\[
+  \overline{0} \;\triangleq\; \Lambda\alpha.\;\lambda f:\alpha\to\alpha.\;\lambda z:\alpha.\;z
+\]
+\[
+  \overline{n+1} \;\triangleq\; \Lambda\alpha.\;\lambda f:\alpha\to\alpha.\;\lambda z:\alpha.\;f\;(\overline{n}\;[\alpha]\;f\;z)
+\]
+
+This encoding, while not how programming languages implement data types in
+practice, demonstrates that System F is an astonishingly powerful foundation.
+It is not a toy: it captures essentially all of higher-order functional
+programming.
+
+\begin{warning}[System F is Not Turing-Complete in the Usual Sense]
+System F is \emph{strongly normalizing}: every well-typed program terminates.
+Unlike the untyped or simply-typed lambda calculus, you cannot write
+non-terminating programs in System F.
+(This is a feature, not a bug, from the perspective of proof theory.)
+The Church numerals can represent all primitive recursive functions, but not
+all computable functions.
+Real functional languages (Haskell, OCaml) extend System F with features like
+general recursion (\code{fix}) that allow non-termination, sacrificing
+strong normalization for Turing completeness.
+\end{warning}
+
+% ============================================================
+\section{Summary of the Chapter}
+\label{sec:ch5-summary}
+
+\begin{takeaway}[Chapter 5: Parametric Polymorphism --- Key Takeaways]
+\begin{enumerate}[label=\textbf{\arabic*.}]
+  \item \textbf{The problem.}
+        Writing separate functions for each type produces duplicated, fragile
+        code.
+        Type variables solve this.
+
+  \item \textbf{Type variables and $\forall$.}
+        System F extends STLC with type variables $\alpha$, type abstraction
+        $\Lambda\alpha.\;e$, type application $e\;[\tau]$, and the universal
+        type $\forall\alpha.\;\tau$.
+
+  \item \textbf{System F.}
+        The polymorphic lambda calculus is STLC with one new level: functions
+        can abstract over types.
+        $\Lambda$ at the term level, $\forall$ at the type level.
+
+  \item \textbf{Parametricity.}
+        A parametrically polymorphic function is type-blind: it cannot inspect
+        what $\alpha$ is.
+        This gives \emph{theorems for free}: the type alone constrains
+        (sometimes uniquely determines) the function's behavior.
+        $\forall\alpha.\;\alpha\to\alpha$ has exactly one inhabitant: identity.
+
+  \item \textbf{C++ templates.}
+        \code{template<typename T>} is $\Lambda T$.
+        Template instantiation is type application $[\text{int}]$, etc.
+        Type deduction is type inference.
+        Templates are System F --- with extra power (specialization, concepts)
+        that breaks pure parametricity.
+
+  \item \textbf{Monomorphization.}
+        C++ generates one binary copy per type argument.
+        This gives zero overhead but causes code size growth and long compile
+        times.
+        Java's type erasure is the opposite tradeoff.
+
+  \item \textbf{Polymorphic type constructors.}
+        \code{vector<T>}, \code{optional<T>}, \code{pair<A,B>} are type-level
+        functions.
+        Their kinds are $*\to*$ and $*\to*\to*$.
+
+  \item \textbf{Parametric vs.\ ad-hoc.}
+        Parametric: one body, all types, free theorems.
+        Ad-hoc: different bodies per type, no free theorems.
+        C++ supports both; they are conceptually distinct.
+
+  \item \textbf{Rank-N polymorphism.}
+        $\forall$ inside argument positions gives higher-rank types.
+        Rank-1 inference is decidable (Hindley-Milner); full System F is not.
+        Rank-2 allows polymorphic function arguments.
+
+  \item \textbf{Existential types.}
+        $\exists\alpha.\;\tau$ hides the concrete type; the provider chooses,
+        the consumer sees only the interface.
+        This models abstract data types, type erasure (\code{std::any},
+        \code{std::function}), and virtual dispatch.
+\end{enumerate}
+\end{takeaway}
+
+% ============================================================
+\section{Exercises}
+\label{sec:ch5-exercises}
+
+\begin{exercise}[Typing derivations]
+Write out the full System F typing derivation for
+$\mathsf{const} = \Lambda\alpha.\;\Lambda\beta.\;\lambda x:\alpha.\;\lambda y:\beta.\;x$.
+Verify that its type is $\forall\alpha.\;\forall\beta.\;\alpha\to\beta\to\alpha$.
+\end{exercise}
+
+\begin{exercise}[Reduction sequences]
+Show the full reduction sequence for
+$(\Lambda\alpha.\;\Lambda\beta.\;\lambda f:\alpha\to\beta.\;\lambda x:\alpha.\;f\;x)\;
+[\mathsf{Int}]\;[\mathsf{Bool}]\;
+(\lambda n:\mathsf{Int}.\; n > 0)\; 42$.
+What does the result reduce to?
+\end{exercise}
+
+\begin{exercise}[Inhabitants]
+How many distinct total functions inhabit each of the following types?
+Give explicit System F terms for each.
+\begin{enumerate}[label=(\alph*)]
+  \item $\forall\alpha.\;\alpha\to\alpha$
+  \item $\forall\alpha.\;\alpha\to\alpha\to\alpha$
+  \item $\forall\alpha.\;\forall\beta.\;\alpha\to\beta\to\beta$
+  \item $\forall\alpha.\;\forall\beta.\;(\alpha\to\beta)\to(\beta\to\alpha)$
+        \emph{(Hint: consider what ``theorems for free'' says here.)}
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Church encoding]
+Using the Church encoding of booleans
+($\Bool_F \triangleq \forall\alpha.\;\alpha\to\alpha\to\alpha$,
+$\mathsf{true}_F = \Lambda\alpha.\;\lambda t:\alpha.\;\lambda f:\alpha.\;t$,
+$\mathsf{false}_F = \Lambda\alpha.\;\lambda t:\alpha.\;\lambda f:\alpha.\;f$):
+\begin{enumerate}[label=(\alph*)]
+  \item Write $\mathsf{and} : \Bool_F \to \Bool_F \to \Bool_F$ as a System F term.
+  \item Write $\mathsf{not} : \Bool_F \to \Bool_F$ as a System F term.
+  \item Write $\mathsf{or}  : \Bool_F \to \Bool_F \to \Bool_F$ as a System F term.
+\end{enumerate}
+Verify your answers by reducing $\mathsf{and}\;\mathsf{true}_F\;\mathsf{false}_F$
+to $\mathsf{false}_F$.
+\end{exercise}
+
+\begin{exercise}[C++ templates]
+For each System F term below, write the corresponding C++ template function.
+Then write two explicit instantiation calls showing type application.
+\begin{enumerate}[label=(\alph*)]
+  \item $\Lambda\alpha.\;\lambda x:\alpha.\;\lambda y:\alpha.\;(x, y) : \forall\alpha.\;\alpha\to\alpha\to\alpha\times\alpha$
+  \item $\Lambda\alpha.\;\Lambda\beta.\;\lambda f:\alpha\to\beta.\;\lambda x:\alpha.\;f\;x
+        : \forall\alpha.\;\forall\beta.\;(\alpha\to\beta)\to\alpha\to\beta$
+  \item $\Lambda\alpha.\;\lambda\ell:\mathsf{List}\;\alpha.\;\lambda x:\alpha.\;x::\ell
+        : \forall\alpha.\;\mathsf{List}\;\alpha\to\alpha\to\mathsf{List}\;\alpha$
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Parametric vs.\ ad-hoc]
+Classify each of the following C++ functions as parametrically polymorphic,
+ad-hoc polymorphic, or neither.
+Justify each answer.
+\begin{enumerate}[label=(\alph*)]
+  \item \code{template<typename T> T id(T x) \{ return x; \}}
+  \item \code{template<typename T> T zero() \{ return T\{\}; \}}
+  \item \code{template<typename T> void print(T x) \{ std::cout << x; \}}
+  \item An overloaded \code{abs} for \code{int} and \code{double}.
+  \item \code{template<typename T> bool isNull(T* p) \{ return p == nullptr; \}}
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Monomorphization cost analysis]
+Suppose a template function \code{process<T>} has 200 lines of code.
+Your program uses it with 15 different types.
+\begin{enumerate}[label=(\alph*)]
+  \item How many lines of code (approximately) does the compiler generate in
+        the object file, assuming no inlining?
+  \item If instead the function used Java-style type erasure with a single
+        \code{Object}-based implementation, how many lines would be generated?
+  \item What is the runtime performance cost of the Java approach?
+        What is the compile-time cost of the C++ approach?
+  \item Describe a scenario where type erasure is clearly preferable to
+        monomorphization, and one where monomorphization is clearly preferable.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Existential encoding]
+A ``counter'' abstract data type has:
+an initial value, an increment operation, and a read operation.
+\begin{enumerate}[label=(\alph*)]
+  \item Write the existential type $\exists\alpha.\;\{ \ldots \}$ for this ADT.
+  \item Provide two different ``implementations'' by packing different concrete
+        types $\alpha$ (e.g., \code{int} counter vs.\ a counter that also tracks
+        the maximum value ever reached).
+  \item Write a C++ interface (\code{class ICounter}) that corresponds to this
+        existential type.
+  \item What does the unpack operation correspond to in C++?
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Rank-2 in Haskell]
+If you have access to a Haskell compiler with the \code{RankNTypes} extension:
+\begin{enumerate}[label=(\alph*)]
+  \item Define a function \code{applyToThree :: (forall a. a -> a) -> (Int, Bool, String)} that applies a polymorphic function to values of three different types.
+  \item Try passing \code{id} to it.  What is the result?
+  \item Try passing \code{(`seq` ())} to it (a function that evaluates its argument).
+        Does it typecheck?
+  \item Explain why a Rank-1 version of \code{applyToThree} would be impossible
+        to write correctly.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Deep reflection]
+Philip Wadler's paper ``Theorems for Free'' (1989) showed that from the type
+$\forall\alpha.\;\mathsf{List}\;\alpha\to\mathsf{List}\;\alpha$ alone, one can
+derive:
+\[
+  h \circ \mathsf{map}\;f \;=\; \mathsf{map}\;f \circ h
+\]
+for any function $h$ of this type and any $f$.
+\begin{enumerate}[label=(\alph*)]
+  \item Explain in words why this equation must hold for any parametrically
+        polymorphic $h$.
+  \item Give two concrete examples of such $h$ (e.g., \code{reverse},
+        \code{tail}) and verify the equation holds for a specific list.
+  \item Give an example of a function with the \emph{same signature} in an
+        impure language (e.g., C++ with \code{std::vector}) that would
+        \emph{violate} this equation.
+        What feature allows the violation?
+\end{enumerate}
+\end{exercise}

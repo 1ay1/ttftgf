@@ -1,0 +1,312 @@
+\documentclass[12pt,a4paper,openany]{book}
+
+% --- Encoding and Fonts ---
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% --- Page Layout ---
+\usepackage[margin=1in]{geometry}
+
+% --- Math ---
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{stmaryrd} % for \llbracket, \rrbracket
+
+% --- Code Listings ---
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{keyword}{RGB}{0,0,180}
+\definecolor{comment}{RGB}{0,128,0}
+\definecolor{string}{RGB}{163,21,21}
+\definecolor{identifier}{RGB}{0,0,0}
+
+% --- UTF-8 literate mappings for the listings package ---
+% The listings package cannot handle raw UTF-8 bytes; we map them to LaTeX.
+\lstset{
+  extendedchars=true,
+  literate=
+    {->}{$\rightarrow$}1
+    {<-}{$\leftarrow$}1
+    {=>}{$\Rightarrow$}1
+    {×}{$\times$}1
+    {≅}{$\cong$}1
+    {≡}{$\equiv$}1
+    {≢}{$\not\equiv$}1
+    {∀}{$\forall$}1
+    {∃}{$\exists$}1
+    {λ}{$\lambda$}1
+    {α}{$\alpha$}1
+    {β}{$\beta$}1
+    {γ}{$\gamma$}1
+    {σ}{$\sigma$}1
+    {τ}{$\tau$}1
+    {¹}{$^1$}1
+    {²}{$^2$}1
+    {³}{$^3$}1
+    {⊥}{$\bot$}1
+    {⊤}{$\top$}1
+    {∧}{$\wedge$}1
+    {∨}{$\vee$}1
+    {¬}{$\neg$}1
+    {∅}{$\emptyset$}1
+    {∈}{$\in$}1
+    {∉}{$\notin$}1
+    {⊂}{$\subset$}1
+    {⊆}{$\subseteq$}1
+    {∞}{$\infty$}1
+    {…}{{\ldots}}1
+    {—}{---}1
+    {–}{--}1
+    {'}{`}1
+    {'}{'}1
+    {"}{{``}}1
+    {"}{''}1
+    {ö}{{\"o}}1
+    {ü}{{\"u}}1
+    {é}{{\'e}}1
+    {è}{{\`e}}1
+    {ê}{{\^e}}1
+    {à}{{\`a}}1
+    {â}{{\^a}}1
+    {î}{{\^i}}1,
+}
+
+\lstdefinestyle{cpp}{
+  language=C++,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{keyword}\bfseries,
+  commentstyle=\color{comment}\itshape,
+  stringstyle=\color{string},
+  identifierstyle=\color{identifier},
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=4,
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  xleftmargin=15pt,
+  framexleftmargin=15pt,
+  morekeywords={concept,requires,constexpr,consteval,decltype,auto,
+    nullptr,static_assert,noexcept,template,typename,class,
+    co_await,co_return,co_yield},
+}
+
+\lstdefinestyle{haskell}{
+  language=Haskell,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{keyword}\bfseries,
+  commentstyle=\color{comment}\itshape,
+  stringstyle=\color{string},
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  tabsize=4,
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  xleftmargin=15pt,
+  framexleftmargin=15pt,
+}
+
+\lstdefinestyle{pseudocode}{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{keyword}\bfseries,
+  commentstyle=\color{comment}\itshape,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  tabsize=4,
+  showstringspaces=false,
+  xleftmargin=15pt,
+  framexleftmargin=15pt,
+}
+
+\lstset{style=cpp}
+
+% --- Theorem Environments ---
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{example}{Example}[chapter]
+\newtheorem{exercise}{Exercise}[chapter]
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}[chapter]
+\newtheorem{intuition}{Intuition}[chapter]
+
+% --- Key Insight Box ---
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+
+\newtcolorbox{keyinsight}[1][Key Insight]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  title=#1,
+  breakable,
+  sharp corners,
+  boxrule=0.8pt,
+}
+
+\newtcolorbox{warning}[1][Warning]{
+  colback=red!5!white,
+  colframe=red!60!black,
+  fonttitle=\bfseries,
+  title=#1,
+  breakable,
+  sharp corners,
+  boxrule=0.8pt,
+}
+
+\newtcolorbox{cppconnection}[1][C++ Connection]{
+  colback=green!5!white,
+  colframe=green!50!black,
+  fonttitle=\bfseries,
+  title=#1,
+  breakable,
+  sharp corners,
+  boxrule=0.8pt,
+}
+
+\newtcolorbox{takeaway}[1][Chapter Takeaways]{
+  colback=yellow!5!white,
+  colframe=yellow!50!black,
+  fonttitle=\bfseries,
+  title=#1,
+  breakable,
+  sharp corners,
+  boxrule=0.8pt,
+}
+
+% --- Hyperlinks ---
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black,
+}
+
+% --- Misc ---
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes,calc}
+
+% --- Bibliography ---
+\usepackage[numbers,sort&compress]{natbib}
+\bibliographystyle{plainnat}
+
+% --- Index ---
+\usepackage{makeidx}
+\makeindex
+
+% --- Custom Commands ---
+% All math-mode commands wrapped in \ensuremath so they work in text too.
+% \typename and \code kept simple; use \texttt directly.
+\newcommand{\typename}[1]{\texttt{#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\Type}{\ensuremath{\mathsf{Type}}}
+\newcommand{\Set}{\ensuremath{\mathsf{Set}}}
+\newcommand{\Nat}{\ensuremath{\mathbb{N}}}
+\newcommand{\Bool}{\ensuremath{\mathsf{Bool}}}
+\newcommand{\Unit}{\ensuremath{\mathsf{Unit}}}
+\newcommand{\Void}{\ensuremath{\mathsf{Void}}}
+\newcommand{\curry}{\ensuremath{\mathsf{curry}}}
+\newcommand{\uncurry}{\ensuremath{\mathsf{uncurry}}}
+
+% --- Hyperref safety for math-heavy titles/bookmarks ---
+\pdfstringdefDisableCommands{%
+  \def\typename#1{#1}%
+  \def\code#1{#1}%
+  \def\Type{Type}%
+  \def\Set{Set}%
+  \def\Nat{N}%
+  \def\Bool{Bool}%
+  \def\Unit{Unit}%
+  \def\Void{Void}%
+  \def\curry{curry}%
+  \def\uncurry{uncurry}%
+  \def\langle{<}%
+  \def\rangle{>}%
+  \def\llbracket{[[}%
+  \def\rrbracket{]]}%
+  \def\cong{~=}%
+  \def\times{x}%
+  \def\to{->}%
+  \def\forall{forall}%
+  \def\exists{exists}%
+  \def\lambda{lambda}%
+  \def\Lambda{Lambda}%
+  \def\alpha{a}%
+  \def\beta{b}%
+  \def\gamma{g}%
+  \def\mathsf#1{#1}%
+  \def\mathbb#1{#1}%
+  \def\mathtt#1{#1}%
+  \def\texttt#1{#1}%
+  \def\emph#1{#1}%
+}
+
+% =============================================
+\title{%
+  \Huge \textbf{Type Theory from the Ground Up} \\[0.5cm]
+  \Large A Programmer's Journey into the Foundations of Types \\[0.3cm]
+  \large \textit{With C++ as Your Companion}
+}
+\author{Generated with Claude}
+\date{2026}
+
+\begin{document}
+
+\frontmatter
+\maketitle
+\tableofcontents
+
+\include{preface}
+
+\mainmatter
+
+\include{chapter01}
+\include{chapter02}
+\include{chapter03}
+\include{chapter04}
+\include{chapter05}
+\include{chapter06}
+\include{chapter07}
+\include{chapter08}
+\include{chapter09}
+\include{chapter10}
+\include{chapter11}
+\include{chapter12}
+\include{chapter13}
+\include{chapter14}
+\include{chapter15}
+\include{chapter16}
+
+\backmatter
+
+% --- Bibliography ---
+\bibliography{references}
+
+% --- Index ---
+\printindex
+
+\end{document}

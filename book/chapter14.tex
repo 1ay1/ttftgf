@@ -1,0 +1,1677 @@
+% ============================================================
+%  Chapter 14: The Curry-Howard Correspondence --- Types as Proofs
+%  Type Theory from the Ground Up
+% ============================================================
+
+\chapter{The Curry-Howard Correspondence --- Types as Proofs}
+
+\begin{quote}
+\itshape
+``The most important and yet least appreciated fact about modern programming
+languages is that they are logics in disguise.'' \\[0.3em]
+\upshape --- Philip Wadler, \textit{Propositions as Types}, 2015
+\end{quote}
+
+\bigskip
+
+\noindent
+We have arrived at what many consider the deepest idea in all of computer
+science. Not the most useful, not the most practical --- though it is both
+of those things too --- but the most \emph{profound}. The idea that will make
+you see types and programs in a fundamentally different light, forever.
+
+Here it is, stated baldly: \textbf{types are logical propositions, and
+programs are mathematical proofs.}
+
+When you write a function \code{f : A -> B} in any typed language, you are
+not just describing a computation. You are constructing a \emph{proof} of
+the logical statement ``$A$ implies $B$.'' When you create a pair
+\code{(a, b) : (A, B)}, you are proving the conjunction ``$A$ and $B$.''
+When the type checker accepts your program, it is verifying that your proof
+is valid.
+
+This is not a metaphor. It is not an analogy. It is a precise, rigorous,
+mathematical correspondence discovered independently by two giants of logic
+and computation, developed over decades, and still being extended today.
+
+Take a breath. Then let us go through it carefully, from the very beginning.
+
+% ----------------------------------------------------------------
+\section{Two Parallel Worlds}
+% ----------------------------------------------------------------
+
+For most of human history, \emph{logic} and \emph{computation} developed as
+completely separate disciplines. Logicians studied how to reason about truth:
+what follows from what, which arguments are valid, how to construct proofs.
+Programmers (eventually) studied how to build software: data structures,
+algorithms, types, compilers.
+
+The two communities had their own vocabularies, their own problems, their own
+textbooks. They sat in different university departments and rarely spoke to
+each other.
+
+And yet, if you look carefully at the two vocabularies side by side, something
+uncanny emerges.
+
+\subsection{The World of Logic}
+
+In propositional and predicate logic, the fundamental objects are
+\textbf{propositions} --- statements that can, in principle, be true or false.
+A proposition is not just any sentence; it is a claim that admits a
+truth value.
+
+\begin{itemize}
+    \item ``It is raining outside'' is a proposition.
+    \item ``$2 + 2 = 4$'' is a proposition (and a true one).
+    \item ``Every even number greater than 2 is the sum of two primes''
+          is a proposition (Goldbach's Conjecture, and we still do not know
+          if it is true or false).
+\end{itemize}
+
+Propositions can be combined using \textbf{connectives}:
+\begin{itemize}
+    \item \textbf{Conjunction} $A \wedge B$: ``$A$ and $B$'' --- true when
+          both $A$ and $B$ are true.
+    \item \textbf{Disjunction} $A \vee B$: ``$A$ or $B$'' --- true when
+          at least one of $A$ or $B$ is true.
+    \item \textbf{Implication} $A \Rightarrow B$: ``if $A$ then $B$'' ---
+          false only when $A$ is true and $B$ is false.
+    \item \textbf{Negation} $\neg A$: ``not $A$'' --- true when $A$ is false.
+    \item \textbf{Truth} $\top$: the trivially true proposition.
+    \item \textbf{Falsehood} $\bot$: the proposition that is always false
+          (the absurdity, the contradiction).
+\end{itemize}
+
+Beyond propositional logic, predicate logic adds \textbf{quantifiers}:
+\begin{itemize}
+    \item \textbf{Universal quantification} $\forall x.\; P(x)$: ``for all
+          $x$, $P$ holds of $x$.''
+    \item \textbf{Existential quantification} $\exists x.\; P(x)$: ``there
+          exists an $x$ such that $P$ holds of $x$.''
+\end{itemize}
+
+A \textbf{proof} of a proposition $P$ is a rigorous argument that $P$ is
+true. To prove $A \wedge B$, you must prove both $A$ and $B$. To prove
+$A \Rightarrow B$, you must assume $A$ and derive $B$. To prove
+$\forall x.\; P(x)$, you must prove $P$ for an arbitrary, generic $x$.
+
+\subsection{The World of Type Theory}
+
+In a typed programming language, the fundamental objects are \textbf{types}
+and \textbf{programs} (or terms). A type classifies values; a program of
+type $T$ produces a value in $T$.
+
+Types can be combined using \textbf{type constructors}:
+\begin{itemize}
+    \item \textbf{Product type} $A \times B$: pairs of an $A$ and a $B$.
+    \item \textbf{Sum type} $A + B$: either an $A$ or a $B$ (tagged).
+    \item \textbf{Function type} $A \to B$: a function from $A$ to $B$.
+    \item \textbf{Unit type} $\Unit$: a type with exactly one value,
+          \code{unit} (often written \code{()} in modern languages).
+    \item \textbf{Empty type} $\Void$: a type with no values at all.
+\end{itemize}
+
+In dependent type theory, we also have:
+\begin{itemize}
+    \item \textbf{Dependent function type} $\Pi x{:}A.\; B(x)$: a function
+          from $a : A$ to a value of type $B(a)$, where the return type
+          can depend on the input value.
+    \item \textbf{Dependent pair type} $\Sigma x{:}A.\; B(x)$: a pair
+          $(a, b)$ where $a : A$ and $b : B(a)$, and the type of the second
+          component depends on the value of the first.
+\end{itemize}
+
+A \textbf{program} (or term) of type $T$ is a well-typed expression that
+inhabits $T$ --- that produces a value of type $T$.
+
+\subsection{The Suspicious Similarity}
+
+Now lay the two worlds side by side and stare at them.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Logic} & \textbf{Type Theory} \\
+\midrule
+Proposition $P$ & Type $T$ \\
+Proof of $P$ & Program of type $T$ \\
+$P$ is provable & $T$ is inhabited (has a value) \\
+$P$ is unprovable & $T$ is empty (has no value) \\
+\midrule
+Conjunction $A \wedge B$ & Product type $A \times B$ \\
+Disjunction $A \vee B$ & Sum type $A + B$ \\
+Implication $A \Rightarrow B$ & Function type $A \to B$ \\
+Negation $\neg A$ & Function type $A \to \Void$ \\
+Truth $\top$ & Unit type $\Unit$ \\
+Falsehood $\bot$ & Empty type $\Void$ \\
+\midrule
+Universal quantification $\forall x{:}A.\; P(x)$ & Dependent function $\Pi x{:}A.\; P(x)$ \\
+Existential quantification $\exists x{:}A.\; P(x)$ & Dependent pair $\Sigma x{:}A.\; P(x)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{keyinsight}[The Curry-Howard Correspondence]
+The table above is not a coincidence or a loose analogy. It is a precise,
+formal isomorphism between systems of logic and systems of types. Every
+valid proof in a logic corresponds to a well-typed program in the matching
+type system, and vice versa. The correspondence is so tight that you can
+\emph{mechanically translate} between the two.
+
+This is called the \textbf{Curry-Howard correspondence}, the
+\textbf{propositions-as-types} principle, or the
+\textbf{proofs-as-programs} correspondence.
+\end{keyinsight}
+
+The claim is radical. It says that when a Haskell programmer writes a
+function from \code{Int} to \code{String}, they are, whether they know it
+or not, constructing a proof that the proposition ``Int implies String''
+holds. Every program is a proof. Every proof is a program.
+
+Let us now go through each line of that table in careful detail, building
+up the full picture from scratch.
+
+% ----------------------------------------------------------------
+\section{The Rosetta Stone: One Entry at a Time}
+% ----------------------------------------------------------------
+
+\subsection{Propositions = Types, Proofs = Programs}
+
+The master key is the very first correspondence: a proposition is a type,
+and a proof of that proposition is a program of that type.
+
+What does this mean operationally? A proposition $P$ is true if and only
+if the corresponding type $T_P$ is \emph{inhabited} --- that is, if there
+exists at least one value of that type.
+
+Think about it this way. Suppose I claim that some proposition $P$ is true.
+If I am making a constructive claim, I need to \emph{show you} why it is
+true. I need to give you a witness, an evidence, an object you can inspect.
+That object is the proof.
+
+In type theory, that object is a \textbf{value} --- a term that inhabits the
+type. The type $T$ is the proposition ``$P$ is true.'' A value $v : T$ is
+a proof of $P$.
+
+\begin{example}[Inhabitation as Truth]
+Consider the type $\Bool$ in Haskell or any typed language. This type is
+inhabited --- it has the values \code{True} and \code{False}. Therefore, the
+proposition corresponding to $\Bool$ is provable (it has proofs).
+
+Now consider the empty type \code{Void} in Haskell, or $\bot$ in logic. By
+definition, \code{Void} has no values. You cannot construct a value of type
+\code{Void}. This corresponds to the proposition $\bot$ (falsehood), which
+has no proofs. You cannot prove a contradiction.
+
+The moment you can produce a value of type $\Void$, you have proven
+falsehood --- meaning your program contains a logical inconsistency.
+In a sound system, this cannot happen.
+\end{example}
+
+\begin{intuition}
+Think of a type as a puzzle. Inhabiting the type means solving the puzzle ---
+producing a value that fits. A proposition being true means the puzzle
+\emph{can} be solved. A proof is the solution. A false proposition is an
+unsolvable puzzle: no matter how hard you try, you cannot produce a value
+of the corresponding empty type.
+\end{intuition}
+
+\subsection{Truth = Unit Type}
+
+The proposition $\top$ (``true'', ``trivially true'') corresponds to the
+\Unit\ type.
+
+Why? Because $\top$ requires no evidence. It is always true, trivially,
+with no assumptions. To prove $\top$, you do nothing: you just say ``yes,
+this is true, obviously.''
+
+The \Unit\ type mirrors this perfectly. It has exactly one inhabitant ---
+the trivial value \code{unit} (written \code{()} in Haskell and Rust).
+Constructing a value of \Unit\ is effortless: you just write \code{()}.
+No information is required.
+
+\begin{lstlisting}[style=haskell]
+-- Haskell
+-- () is the unit type; () is also its only value
+trivialProof :: ()
+trivialProof = ()   -- Proving "True" requires no effort
+
+-- In C++, the closest analog is a function returning void,
+-- though Unit and Void are historically confused in C/C++
+\end{lstlisting}
+
+\subsection{Falsehood = Empty Type}
+
+The proposition $\bot$ (``false'', ``absurdity'', ``contradiction'')
+corresponds to the empty type $\Void$ --- a type with no inhabitants.
+
+You cannot prove a contradiction. In type theory, this means: you cannot
+construct a value of the empty type. If you somehow had one --- if your
+type-checking rules or axioms were inconsistent --- you could derive anything
+from it, just as in logic you can prove anything from a contradiction
+(\emph{ex falso quodlibet}).
+
+\begin{lstlisting}[style=haskell]
+-- Haskell's empty type: Void
+-- It has no constructors, so you can never make a value of this type
+data Void  -- no constructors!
+
+-- But if you somehow *had* a value of Void, you could prove anything
+absurd :: Void -> a
+absurd v = case v of {}   -- no cases to handle: impossible to reach
+-- This function has type Void -> a for any type a
+-- Logically: "False implies anything" (ex falso quodlibet)
+\end{lstlisting}
+
+The function \code{absurd} is itself a beautiful example of Curry-Howard.
+It has type \code{Void -> a}, which corresponds to the logical statement
+$\bot \Rightarrow P$ for any proposition $P$. This is exactly the principle
+of explosion: from a contradiction, anything follows. The program is valid
+because it never has to actually run --- you cannot supply it a value of
+\code{Void} to call it with.
+
+% ----------------------------------------------------------------
+\section{Proofs as Programs: Implication}
+% ----------------------------------------------------------------
+
+The most important correspondence in the entire table is this one:
+
+\[
+\text{Implication } A \Rightarrow B \quad\longleftrightarrow\quad
+\text{Function type } A \to B
+\]
+
+This is not a loose analogy. It is an exact match, and unpacking it will
+teach you something profound about what functions really are.
+
+\subsection{What Is a Proof of $A \Rightarrow B$?}
+
+In logic, to prove ``$A$ implies $B$'', you proceed as follows. You
+\emph{assume} that $A$ is true (you introduce $A$ as a hypothesis). Under
+that assumption, you construct a proof of $B$. If you can do that ---
+if, given a proof of $A$, you can produce a proof of $B$ --- then you have
+proven $A \Rightarrow B$.
+
+Notice the structure: you are describing a \emph{transformation} from
+proofs of $A$ to proofs of $B$. Given any evidence for $A$, you can
+produce evidence for $B$.
+
+That is a function. Precisely and exactly.
+
+A proof of $A \Rightarrow B$ is a function that takes a proof of $A$ (a
+value of type $A$) and returns a proof of $B$ (a value of type $B$).
+The proof is the function. The function is the proof.
+
+\begin{example}[Modus Ponens as Function Application]
+The oldest and most fundamental rule of inference in logic is
+\textbf{modus ponens}:
+
+\begin{center}
+\begin{tabular}{c}
+$A \Rightarrow B$ \quad $A$ \\
+\hline
+$B$
+\end{tabular}
+\end{center}
+
+``If $A$ implies $B$, and $A$ is true, then $B$ is true.''
+
+Under Curry-Howard, modus ponens is \emph{function application}:
+
+\[
+\frac{f : A \to B \quad a : A}{f(a) : B}
+\]
+
+If you have a function \code{f : A -> B} and a value \code{a : A},
+then \code{f a : B}. Applying a function to its argument IS modus ponens.
+Every single function call in every program you have ever written has
+been an instance of the oldest rule of logical inference.
+\end{example}
+
+\begin{lstlisting}[style=haskell]
+-- Haskell: proofs of implications as functions
+
+-- Proof that "if we have a number, we have a string"
+-- (i.e., Nat => String, or more precisely: Int -> String)
+numberImpliesString :: Int -> String
+numberImpliesString n = show n
+-- This function IS a proof. Its existence proves Int => String.
+
+-- Proof that "A => A" (A implies A) -- the identity
+-- This is the logical axiom: a proposition implies itself
+proofOfAimpliesA :: a -> a
+proofOfAimpliesA x = x
+-- id is a proof of A => A for any proposition A
+
+-- Proof that "if A => B and B => C, then A => C"
+-- This is transitivity of implication (hypothetical syllogism)
+-- Logically: (A => B) => (B => C) => (A => C)
+syllogism :: (a -> b) -> (b -> c) -> (a -> c)
+syllogism f g = g . f    -- function composition IS proof transitivity
+\end{lstlisting}
+
+\begin{keyinsight}[Function Composition = Proof Transitivity]
+In logic, if $A \Rightarrow B$ and $B \Rightarrow C$, then
+$A \Rightarrow C$. This is called transitivity of implication, or
+hypothetical syllogism.
+
+In type theory, if \code{f : A -> B} and \code{g : B -> C}, then
+\code{g . f : A -> C}. This is function composition.
+
+These are the same thing. Composing functions is doing logic.
+Every time you write a pipeline of transformations in any functional style,
+you are building a proof by transitivity.
+\end{keyinsight}
+
+Let us do a few more examples to make this concrete and vivid.
+
+\begin{example}[More Proofs as Functions]
+\begin{lstlisting}[style=haskell]
+-- Proof that "(A => B) => (A => B)" -- trivially, anything implies itself
+-- (This is just the identity function on function types)
+trivial :: (a -> b) -> (a -> b)
+trivial f = f
+
+-- Proof that "A => B => A"
+-- (If A is true, then B being true doesn't change that A is true)
+-- This is called "const" or "K combinator"
+proofAimpliesBimpliesA :: a -> b -> a
+proofAimpliesBimpliesA a _ = a
+-- Given a proof of A, we can ignore any proof of B and return the proof of A
+
+-- Proof that "(A => B => C) => (B => A => C)"
+-- (We can swap the order of assumptions -- "flip")
+proofFlip :: (a -> b -> c) -> (b -> a -> c)
+proofFlip f b a = f a b
+-- This is the "flip" function: logical commutativity of assumptions
+\end{lstlisting}
+\end{example}
+
+These are not toy examples. The combinators \code{id}, \code{const}, and
+\code{flip} are standard functions in Haskell (and in functional programming
+generally). Under Curry-Howard, they are simultaneously three classical
+theorems of propositional logic: the identity axiom, weakening, and
+permutation of hypotheses.
+
+\begin{cppconnection}[Implication in C++]
+In C++, every function type \code{A -> B} (written as \code{std::function<B(A)>}
+or as a template) is a proof of the implication $A \Rightarrow B$. When the
+compiler type-checks a function and accepts it, it is verifying that the
+proof is valid.
+
+\begin{lstlisting}[style=cpp]
+#include <functional>
+#include <string>
+#include <type_traits>
+
+// Proof that "int implies string" (we can always get a string from an int)
+std::string intImpliesString(int n) {
+    return std::to_string(n);
+}
+
+// Proof that "A implies A" for any type A -- the identity
+template<typename A>
+A identity(A a) { return a; }
+
+// Proof that "A => B" and "B => C" together imply "A => C"
+// (function composition, i.e., transitivity of implication)
+template<typename A, typename B, typename C>
+std::function<C(A)> compose(std::function<B(A)> f, std::function<C(B)> g) {
+    return [f, g](A a) { return g(f(a)); };
+}
+
+// static_assert is a weak form of Curry-Howard:
+// it forces the compiler to VERIFY a proposition at compile time
+static_assert(std::is_integral_v<int>,
+    "int must be an integral type");  // This IS a proof obligation!
+// The fact that this compiles is a proof that int satisfies is_integral
+\end{lstlisting}
+\end{cppconnection}
+
+% ----------------------------------------------------------------
+\section{Proofs as Programs: Conjunction}
+% ----------------------------------------------------------------
+
+The next correspondence:
+
+\[
+\text{Conjunction } A \wedge B \quad\longleftrightarrow\quad
+\text{Product type } A \times B
+\]
+
+To prove $A \wedge B$ (``$A$ and $B$''), you must provide evidence for
+\emph{both} $A$ and $B$ simultaneously. You cannot prove a conjunction by
+proving only one conjunct. You need both.
+
+In type theory, a value of type $A \times B$ is a \textbf{pair} $(a, b)$
+where $a : A$ and $b : B$. To construct a pair, you must provide a value
+for the first component \emph{and} a value for the second component.
+
+The structural parallel is exact:
+\begin{itemize}
+    \item \textbf{Introduction} (proving $A \wedge B$): provide proofs of
+          both $A$ and $B$. In type theory: construct a pair $(a, b)$.
+    \item \textbf{Elimination} (using a proof of $A \wedge B$): extract
+          the proof of $A$, or extract the proof of $B$.
+          In type theory: project out the first or second component.
+\end{itemize}
+
+\begin{lstlisting}[style=haskell]
+-- Haskell: conjunction as product types
+
+-- Proof of (A /\ B) -- construct a pair
+proofConjunction :: a -> b -> (a, b)
+proofConjunction a b = (a, b)
+-- To prove "A and B", give me proofs of A and B separately
+
+-- Elimination: from (A /\ B), extract proof of A
+andElimLeft :: (a, b) -> a
+andElimLeft (a, _) = a    -- first projection
+
+-- Elimination: from (A /\ B), extract proof of B
+andElimRight :: (a, b) -> b
+andElimRight (_, b) = b   -- second projection
+
+-- Proof that "A /\ B => B /\ A" (conjunction is commutative)
+conjunctionCommutes :: (a, b) -> (b, a)
+conjunctionCommutes (a, b) = (b, a)
+-- This simple swap function IS a proof that "and" is commutative!
+
+-- Proof that "A /\ B => A" (and-elimination)
+andImpliesA :: (a, b) -> a
+andImpliesA = fst
+
+-- Proof that "(A /\ B) /\ C <=> A /\ (B /\ C)" (associativity)
+assocLeft :: ((a, b), c) -> (a, (b, c))
+assocLeft ((a, b), c) = (a, (b, c))
+\end{lstlisting}
+
+\begin{example}[Conjunction in Practice]
+The fact that \code{conjunctionCommutes} above has the type
+\code{(a, b) -> (b, a)} is both a type signature and a theorem:
+``For all propositions $A$ and $B$, if $A \wedge B$ then $B \wedge A$.''
+
+The program is the proof. The fact that this program type-checks in Haskell
+means Haskell's type checker has verified this theorem. And indeed, it is
+true: commutativity of conjunction is a theorem in propositional logic.
+
+What would it mean if we could \emph{not} write this function? It would mean
+the corresponding logical theorem is false --- that conjunction is not
+commutative in that logic system.
+\end{example}
+
+\begin{intuition}
+A product type is a conjunction because you need \emph{both} to construct
+it and you can extract \emph{each} from it. The structure of introduction
+and elimination is identical between $\wedge$ in logic and $\times$ in type
+theory. They are the same thing wearing different hats.
+\end{intuition}
+
+% ----------------------------------------------------------------
+\section{Proofs as Programs: Disjunction}
+% ----------------------------------------------------------------
+
+The next correspondence:
+
+\[
+\text{Disjunction } A \vee B \quad\longleftrightarrow\quad
+\text{Sum type } A + B
+\]
+
+To prove $A \vee B$ (``$A$ or $B$''), you must provide evidence for
+\emph{at least one} of $A$ or $B$. But crucially --- and this is often
+misunderstood --- you must also say \emph{which one} you are proving.
+A constructive proof of $A \vee B$ is always either:
+\begin{itemize}
+    \item a proof of $A$ (tagged with ``left''), or
+    \item a proof of $B$ (tagged with ``right'').
+\end{itemize}
+
+You cannot constructively prove $A \vee B$ without knowing which disjunct
+holds. (We will return to why this matters when we discuss constructive vs.
+classical logic in a moment.)
+
+In type theory, a value of the sum type $A + B$ is either:
+\begin{itemize}
+    \item a value of $A$, tagged with \code{Left} (or \code{Inl}), or
+    \item a value of $B$, tagged with \code{Right} (or \code{Inr}).
+\end{itemize}
+
+Again the structure matches exactly:
+\begin{itemize}
+    \item \textbf{Introduction}: inject into the sum type, providing
+          \emph{which side} along with the value. Logically: prove one
+          disjunct and announce which one.
+    \item \textbf{Elimination}: to use a proof of $A \vee B$, you must
+          handle \emph{both cases} --- what you do if it was a proof of $A$,
+          and what you do if it was a proof of $B$. In type theory: pattern
+          match on the sum type, handling \code{Left} and \code{Right}.
+\end{itemize}
+
+\begin{lstlisting}[style=haskell]
+-- Haskell: disjunction as sum types (Either a b)
+
+-- Introduction: prove (A \/ B) by proving A (left injection)
+injectLeft :: a -> Either a b
+injectLeft a = Left a
+
+-- Introduction: prove (A \/ B) by proving B (right injection)
+injectRight :: b -> Either a b
+injectRight b = Right b
+
+-- Elimination: from a proof of (A \/ B), derive C
+-- given that A => C and B => C
+orElim :: (a -> c) -> (b -> c) -> Either a b -> c
+orElim f _ (Left a)  = f a
+orElim _ g (Right b) = g b
+-- This is "case analysis": you MUST handle both possibilities
+
+-- Proof that "A \/ B => B \/ A" (disjunction is commutative)
+disjunctionCommutes :: Either a b -> Either b a
+disjunctionCommutes (Left a)  = Right a
+disjunctionCommutes (Right b) = Left b
+
+-- Proof that "A => A \/ B"
+aImpliesAorB :: a -> Either a b
+aImpliesAorB = Left
+
+-- Proof that "(A \/ B) /\ C => (A /\ C) \/ (B /\ C)" -- distributivity
+distribute :: (Either a b, c) -> Either (a, c) (b, c)
+distribute (Left a,  c) = Left  (a, c)
+distribute (Right b, c) = Right (b, c)
+\end{lstlisting}
+
+\begin{keyinsight}[Pattern Matching = Case Analysis in Logic]
+When you pattern match on a sum type in Haskell, Rust, or any language with
+algebraic data types, you are performing \textbf{disjunction elimination}
+in logic. The requirement that your match is \emph{exhaustive} --- that you
+handle every constructor --- corresponds to the logical requirement that when
+you use a proof of $A \vee B$, you must be able to proceed regardless of
+which disjunct holds.
+
+If your match is non-exhaustive (you forgot a case), you have used a proof
+of $A \vee B$ in a way that only works when $A$ holds. That is logically
+invalid. The compiler warning or error about non-exhaustive patterns is
+actually enforcing a proof-theoretic correctness condition!
+\end{keyinsight}
+
+\begin{cppconnection}[Sum Types and Pattern Matching in C++]
+C++17's \code{std::variant} is a sum type, and \code{std::visit} is
+disjunction elimination:
+
+\begin{lstlisting}[style=cpp]
+#include <variant>
+#include <string>
+#include <iostream>
+
+// Either<int, std::string> -- disjunction of "int" and "string"
+using IntOrString = std::variant<int, std::string>;
+
+// Disjunction elimination: handle BOTH cases
+// Logically: prove C from (A \/ B) given proofs A => C and B => C
+std::string eliminate(const IntOrString& v) {
+    return std::visit([](auto&& arg) -> std::string {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, int>) {
+            return "Got an int: " + std::to_string(arg);
+        } else {
+            return "Got a string: " + arg;
+        }
+    }, v);
+}
+// std::visit requires you to handle ALL alternatives
+// Missing a case -> compile error: this IS proof-theoretic soundness
+\end{lstlisting}
+\end{cppconnection}
+
+% ----------------------------------------------------------------
+\section{Proofs as Programs: Negation}
+% ----------------------------------------------------------------
+
+How does negation --- ``$A$ is false'', ``not $A$'' --- fit into the
+picture? This is one of the most elegant parts of the correspondence.
+
+\begin{keyinsight}[Negation = Function to Empty Type]
+In constructive logic, the negation $\neg A$ is \emph{defined} as
+$A \Rightarrow \bot$. ``$A$ is false'' means ``if $A$ were true, we could
+derive a contradiction.''
+
+Under Curry-Howard, this becomes:
+\[
+\neg A \;\equiv\; A \to \Void
+\]
+A proof of $\neg A$ is a function that, given any value of type $A$,
+produces a value of the empty type $\Void$. Since $\Void$ has no values,
+such a function can never actually return. The only way a function
+\code{f : A -> Void} can type-check without pattern-matching on an empty
+type inside it is if $A$ itself is an uninhabited type.
+\end{keyinsight}
+
+\begin{lstlisting}[style=haskell]
+-- In Haskell, Void is the empty type (from Data.Void)
+import Data.Void
+
+-- A proof of "not A" is a function A -> Void
+type Not a = a -> Void
+
+-- Proof that "A => not (not A)"  -- double negation introduction
+-- (This works constructively!)
+doubleNegIntro :: a -> Not (Not a)
+doubleNegIntro a notA = notA a
+-- Given a proof of A, and a proof of (A -> Void),
+-- we apply the function to get a Void value.
+-- Logically: A => ((A => False) => False)
+
+-- Proof that "not A /\ not B => not (A \/ B)"
+-- (De Morgan's law, one direction)
+deMorganAnd :: (Not a, Not b) -> Not (Either a b)
+deMorganAnd (notA, notB) (Left  a) = notA a
+deMorganAnd (notA, notB) (Right b) = notB b
+
+-- Proof that "not (A \/ B) => not A /\ not B"
+-- (De Morgan's law, other direction)
+deMorganOr :: Not (Either a b) -> (Not a, Not b)
+deMorganOr notAorB = (notAorB . Left, notAorB . Right)
+\end{lstlisting}
+
+\begin{example}[Negation in Action]
+Consider the claim ``\code{Int} is not equal to \code{String}'' at the
+type level. In a proof assistant, you would encode this as
+$\neg(\code{Int} \equiv \code{String})$, i.e., a function from a proof that
+$\code{Int} \equiv \code{String}$ to $\Void$. Such a function exists and
+is constructable --- which is the formal proof that the two types are
+distinct.
+
+Conversely, if you could write a function \code{impossibleCoerce :: Int -> Void}
+where \code{Int} is a nonempty type, something would be very wrong with
+your type system. A well-founded type system cannot have such a function
+unless \code{Int} is actually empty.
+\end{example}
+
+% ----------------------------------------------------------------
+\section{Constructive vs.\ Classical Logic}
+% ----------------------------------------------------------------
+
+Here we encounter something surprising and deep. The Curry-Howard
+correspondence does not give you all of classical logic. It gives you
+\textbf{constructive} (or \textbf{intuitionistic}) logic. And the
+difference is philosophically profound.
+
+\subsection{The Law of Excluded Middle}
+
+In classical logic, there is a fundamental axiom called the
+\textbf{law of excluded middle} (LEM):
+\[
+A \vee \neg A \qquad \text{(for any proposition } A\text{)}
+\]
+``Either $A$ is true, or $A$ is false. There is no middle ground.''
+
+In classical logic, this is simply taken for granted. Every proposition is
+either true or false, whether or not we can determine which.
+
+But under Curry-Howard, LEM would correspond to a program of type:
+\begin{lstlisting}[style=haskell]
+-- Can we write this?
+lem :: Either a (a -> Void)
+lem = ???  -- LEFT or RIGHT? With what values?
+\end{lstlisting}
+
+This is a function that, for \emph{any} type \code{a}, produces either a
+value of \code{a} or a function from \code{a} to \code{Void}. Think about
+what this would require. You'd need to either:
+\begin{itemize}
+    \item produce an arbitrary value of \code{a} (impossible for an unknown
+          type --- what value would you pick for, say, a custom user type?), or
+    \item produce a function \code{a -> Void} (which would require knowing
+          that \code{a} is empty, which you cannot know in general).
+\end{itemize}
+
+There is no way to write this function in a sound type system with parametric
+polymorphism. It is not writable. Therefore, the law of excluded middle
+is \emph{not provable} in constructive logic.
+
+\begin{warning}[Classical vs.\ Constructive: The Deep Difference]
+In \textbf{classical logic}, ``$P$ is true'' means $P$ has a truth value of
+TRUE, regardless of whether anyone can find a proof.
+
+In \textbf{constructive (intuitionistic) logic}, ``$P$ is true'' means we
+have an explicit, constructive proof of $P$. Truth requires a witness.
+
+This is not just a philosophical nicety. It has real computational content:
+\begin{itemize}
+    \item A constructive proof of $A \vee B$ gives you an algorithm that
+          tells you \emph{which} disjunct holds.
+    \item A classical proof of $A \vee B$ might only show that assuming
+          $\neg A \wedge \neg B$ leads to contradiction --- without telling
+          you which one actually holds.
+\end{itemize}
+Under Curry-Howard, only constructive proofs have a direct computational
+interpretation. Classical proofs require extended type systems.
+\end{warning}
+
+\subsection{Double Negation Elimination}
+
+Another classical tautology that fails constructively is
+\textbf{double negation elimination} (DNE):
+\[
+\neg\neg A \Rightarrow A \qquad \text{``If A cannot be false, then A is true''}
+\]
+
+We can prove the forward direction ($A \Rightarrow \neg\neg A$) constructively:
+\begin{lstlisting}[style=haskell]
+-- This works constructively: A => not (not A)
+doubleNegIntro :: a -> (a -> Void) -> Void
+doubleNegIntro a = \notA -> notA a
+\end{lstlisting}
+
+But the reverse --- going from $\neg\neg A$ to $A$ --- is not constructively
+provable:
+\begin{lstlisting}[style=haskell]
+-- This CANNOT be written in a parametrically polymorphic sound system:
+doubleNegElim :: ((a -> Void) -> Void) -> a
+doubleNegElim _ = ???   -- How do you produce a value of 'a'?
+\end{lstlisting}
+
+Knowing that a type is ``non-empty from the outside'' does not give you an
+element of it. You would need to actually go look inside and find one.
+
+\subsection{Continuations and Classical Logic}
+
+Here is something beautiful: there \emph{is} a Curry-Howard interpretation
+of classical logic, but it requires a non-standard type system feature called
+\textbf{continuations}.
+
+In the typed lambda calculus with \textbf{call/cc} (call-with-current-continuation),
+you can write:
+
+\begin{lstlisting}[style=haskell]
+-- With continuations (using ContT monad):
+-- callCC corresponds to Peirce's law, which is equivalent to LEM
+-- Peirce's law: ((A => B) => A) => A
+peirce :: ((a -> b) -> a) -> a
+-- This is provable in classical logic but not constructively
+-- In a continuation monad, it IS writeable:
+-- peirce f = callCC (\k -> f (\a -> k a >>= absurd))
+-- (morally)
+\end{lstlisting}
+
+The slogan here is: \textbf{continuations correspond to classical logic}.
+Adding \code{call/cc} to a functional language is equivalent to adding the
+law of excluded middle to the logic. This is a stunning connection between
+control flow and logical foundations.
+
+The complete picture is:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Logic} & \textbf{Computation} \\
+\midrule
+Intuitionistic / Constructive & Simply typed lambda calculus \\
+Classical & Lambda calculus + call/cc (continuations) \\
+Linear logic & Linear type systems (Rust's ownership!) \\
+Modal logic & Staged computation / metaprogramming \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The Curry-Howard correspondence is not a single fixed table. It is an entire
+\emph{program} for discovering new correspondences: each extension of logic
+corresponds to some programming language feature, and vice versa.
+
+% ----------------------------------------------------------------
+\section{\texttt{static\_assert} as a Proof Obligation in C++}
+% ----------------------------------------------------------------
+
+You have been using a weak form of Curry-Howard every time you wrote a
+\code{static\_assert} in C++.
+
+\code{static\_assert(condition, message)} is a directive to the compiler:
+\emph{prove this condition at compile time.} If the condition is true, the
+program compiles. If it is false, compilation fails. The condition is a
+\textbf{proposition}, and the fact that the compiler accepts it is the
+\textbf{proof}.
+
+\begin{lstlisting}[style=cpp]
+#include <type_traits>
+#include <cstdint>
+
+// "int is 4 bytes" -- a proposition about the runtime environment
+// Compilation succeeds only if this is true
+static_assert(sizeof(int) == 4, "This code assumes 32-bit int");
+// The successful compilation IS the proof.
+
+// "T must be an integer type" -- a type-level proposition
+template<typename T>
+T double_it(T x) {
+    static_assert(std::is_integral_v<T>,
+        "double_it requires an integer type");
+    // The proposition: "T is an integral type"
+    // The proof: the compiler checks std::is_integral_v<T>
+    return x * 2;
+}
+
+// Proving algebraic properties at compile time
+static_assert(std::is_same_v<int, int>,
+    "int equals int");                       // Trivially true (reflexivity)
+static_assert(!std::is_same_v<int, float>,
+    "int does not equal float");             // Types are distinct
+
+// Proving type relationships
+static_assert(std::is_base_of_v<std::exception, std::runtime_error>,
+    "runtime_error derives from exception"); // Subtyping is a proof!
+\end{lstlisting}
+
+\begin{cppconnection}[Type Traits as Propositions]
+C++20's \code{requires} clauses and concepts are another step toward
+Curry-Howard. A concept is literally a logical predicate on types, and
+satisfying a concept requirement is a proof:
+
+\begin{lstlisting}[style=cpp]
+#include <concepts>
+
+// "Addable" is a proposition about a type T:
+// "there exists a binary + operation on T that returns T"
+template<typename T>
+concept Addable = requires(T a, T b) {
+    { a + b } -> std::same_as<T>;
+};
+
+// The compiler proves "int satisfies Addable" when we instantiate this:
+template<Addable T>
+T sum(T a, T b) { return a + b; }
+
+// Checking: does int satisfy Addable?
+static_assert(Addable<int>);     // Proves the proposition!
+static_assert(!Addable<void*>);  // Proves the negation!
+
+// A concept is a proposition; satisfying it is a proof.
+// The constraint "Addable<T>" in a template is a HYPOTHESIS in a proof.
+// The body of the function is the rest of the proof, under that hypothesis.
+\end{lstlisting}
+
+Every concept constraint in a C++20 template is a logical hypothesis. The
+template body is a proof that proceeds under those hypotheses. When the
+compiler instantiates the template and verifies the constraints, it is
+checking the proof.
+\end{cppconnection}
+
+% ----------------------------------------------------------------
+\section{Proof Assistants: Coq, Agda, and Lean}
+% ----------------------------------------------------------------
+
+Languages like Coq, Agda, and Lean take the Curry-Howard correspondence
+completely seriously. They are simultaneously programming languages and
+proof assistants: you write programs, and the type checker verifies that
+those programs prove the theorems encoded in their types.
+
+\subsection{A Taste of Agda}
+
+Agda is a dependently typed programming language and proof assistant. In
+Agda, types can depend on values, which means you can encode rich
+mathematical statements as types and prove them by writing programs.
+
+\begin{lstlisting}[style=haskell]
+-- Agda syntax (similar to Haskell but with dependent types)
+
+-- The natural numbers
+data Nat : Set where
+  zero : Nat
+  suc  : Nat -> Nat
+
+-- Addition of natural numbers
+_+_ : Nat -> Nat -> Nat
+zero  + m = m
+suc n + m = suc (n + m)
+
+-- The TYPE of this function IS the theorem: "0 + n = n"
+-- The FUNCTION BODY is the PROOF of the theorem.
+plus-zero-left : (n : Nat) -> zero + n == n
+plus-zero-left n = refl
+-- 'refl' is a proof of "x = x" (reflexivity)
+-- The computation "zero + n" reduces to "n" by the definition above,
+-- so "zero + n = n" becomes "n = n", and refl proves it.
+
+-- Theorem: addition is commutative
+-- The TYPE states the theorem; writing the function PROVES it.
+plus-comm : (m n : Nat) -> m + n == n + m
+plus-comm zero    n = ...   -- would prove 0 + n = n + 0
+plus-comm (suc m) n = ...   -- would prove (1+m) + n = n + (1+m)
+-- (Full proof omitted for length, but it type-checks in Agda)
+\end{lstlisting}
+
+\begin{lstlisting}[style=haskell]
+-- A simple proof in Lean 4 (modern proof assistant)
+-- Theorem: for all natural numbers n, n + 0 = n
+theorem add_zero : forall n : Nat, n + 0 = n := by
+  intro n          -- introduce n as a variable (universal quantification)
+  induction n with  -- prove by induction
+  | zero => rfl    -- base case: 0 + 0 = 0, by reflexivity
+  | succ n ih =>   -- inductive case: (n+1) + 0 = n+1
+      simp [Nat.add_succ, ih]  -- use the inductive hypothesis
+-- The TYPE of "add_zero" is the proposition.
+-- The tactic proof IS the program inhabiting that type.
+\end{lstlisting}
+
+These proof assistants have been used to verify:
+\begin{itemize}
+    \item \textbf{The Four Color Theorem} (Coq, 2005) --- the famous
+          map-coloring theorem that was first proved by computer-assisted
+          case analysis. Gonthier's Coq proof is fully verified.
+    \item \textbf{The Feit-Thompson Theorem} (Coq, 2012) --- a 255-page
+          theorem from group theory, formalized in 150,000 lines of Coq.
+          It took six years.
+    \item \textbf{CompCert} --- a fully verified C compiler, proved in Coq
+          to correctly translate C programs to assembly. Every optimization
+          pass is proven correct.
+    \item \textbf{seL4} --- a verified operating system microkernel,
+          proved to be free of buffer overflows, null pointer dereferences,
+          and other memory safety errors.
+\end{itemize}
+
+This is Curry-Howard in its full glory: by writing programs in a
+sufficiently expressive type system, we can prove mathematical theorems
+and verify software correctness with a certainty that no amount of
+testing can provide.
+
+% ----------------------------------------------------------------
+\section{Make Illegal States Unrepresentable: Curry-Howard in Practice}
+% ----------------------------------------------------------------
+
+You do not need a proof assistant to benefit from the Curry-Howard mindset.
+One of the most practically important principles in software engineering is
+a direct application of it:
+
+\begin{keyinsight}[Make Illegal States Unrepresentable]
+\textbf{``Make illegal states unrepresentable''} is the Curry-Howard
+correspondence applied to software design.
+
+If your types encode your invariants, then a compiling program is a
+\emph{proof} that those invariants hold. The type system \emph{is} the
+logic. Well-typed programs are proofs that your system state is valid.
+\end{keyinsight}
+
+Let us see this concretely. Suppose you are building a door-lock system.
+A door can be open or closed, and locked or unlocked. But semantically,
+a door cannot be both open \emph{and} locked: that is a physically
+impossible (illegal) state.
+
+A naive representation:
+\begin{lstlisting}[style=cpp]
+// Naive: illegal states are representable
+struct Door {
+    bool is_open;
+    bool is_locked;
+    // Nothing stops is_open=true AND is_locked=true
+    // which is physically impossible
+};
+\end{lstlisting}
+
+The types allow constructing the value
+\code{Door\{true, true\}} (open and locked), which is nonsense.
+Our code must check for this manually, everywhere.
+
+Now apply Curry-Howard thinking. We want the \emph{type system} to prove
+that no such illegal state can exist:
+
+\begin{lstlisting}[style=cpp]
+// Curry-Howard approach: encode invariants in types
+// Now illegal states CANNOT BE REPRESENTED
+
+struct Open   {};
+struct Closed {};
+struct Locked {};
+struct Unlocked {};
+
+// Door state machine: state is encoded in the TYPE
+template<typename Status>
+class Door;
+
+template<>
+class Door<Closed> {
+public:
+    // A closed door can be opened (if unlocked) or locked
+    Door<Open>   open()   const { return {}; }
+    Door<Locked> lock()   const { return {}; }
+};
+
+template<>
+class Door<Open> {
+public:
+    // An open door cannot be locked -- no lock() method exists!
+    Door<Closed> close() const { return {}; }
+    // There is no lock() here. The TYPE SYSTEM PREVENTS "open+locked".
+};
+
+template<>
+class Door<Locked> {
+public:
+    Door<Closed> unlock() const { return {}; }
+    // No open() or close() when locked
+};
+
+// The TYPES prove that: Open => not Locked
+// You cannot be in state Door<Open> and have called lock().
+// There is no type Door<OpenAndLocked> -- it is literally unrepresentable.
+\end{lstlisting}
+
+\begin{example}[Parse, Don't Validate]
+Another beloved application is the pattern ``Parse, don't validate.''
+
+Instead of:
+\begin{lstlisting}[style=cpp]
+// Weak: validity is a runtime property, not a type property
+struct Email {
+    std::string value;  // Might or might not be valid
+};
+
+bool is_valid_email(const Email& e);  // You might forget to call this!
+\end{lstlisting}
+
+We do:
+\begin{lstlisting}[style=cpp]
+// Strong: validity is encoded in the type itself
+class ValidEmail {
+private:
+    std::string value;
+    // Private constructor: only parseable from a string
+    explicit ValidEmail(std::string v) : value(std::move(v)) {}
+
+public:
+    // Returns a proof that the string is a valid email
+    // (or no proof if it's not)
+    static std::optional<ValidEmail> parse(const std::string& s) {
+        if (/* validate s */) {
+            return ValidEmail{s};
+        }
+        return std::nullopt;
+    }
+
+    const std::string& get() const { return value; }
+};
+
+// A function expecting ValidEmail CANNOT receive an unvalidated string.
+// The TYPE is the proposition "this string has been validated as an email."
+// The VALUE is the proof.
+void send_confirmation(const ValidEmail& to);
+// Calling this IS applying modus ponens:
+// you have a ValidEmail (proof of "valid email"),
+// the function proves "valid email => confirmation sent"
+\end{lstlisting}
+
+Every well-typed call to \code{send\_confirmation} is a proof that the
+argument has been validated. The type system enforces this automatically.
+No one can accidentally pass an unvalidated string without the compiler
+refusing to compile.
+\end{example}
+
+This is the Curry-Howard correspondence put to work in everyday engineering.
+Every time you design a type to make invalid states impossible, you are
+applying the \emph{propositions-as-types} principle: you are encoding a
+logical invariant as a type, and a value of that type is a proof that the
+invariant holds.
+
+% ----------------------------------------------------------------
+\section{Universal and Existential Quantification}
+% ----------------------------------------------------------------
+
+The Curry-Howard table has two more rows, and they are the most powerful:
+the correspondence between quantifiers in logic and dependent types.
+
+\subsection{Universal Quantification = Dependent Functions}
+
+\[
+\forall x{:}A.\; P(x) \quad\longleftrightarrow\quad \Pi x{:}A.\; P(x)
+\]
+
+In logic, $\forall x.\; P(x)$ means ``for every $x$, $P(x)$ holds.'' A
+proof of this is a procedure that, given any $x$, produces a proof of
+$P(x)$. That procedure must work for \emph{any} $x$, with no assumptions
+about which specific $x$ you get.
+
+In type theory, $\Pi x{:}A.\; P(x)$ (the dependent function type) is a
+function that takes a value $x : A$ and returns a value of type $P(x)$.
+Crucially, the \emph{return type} $P(x)$ can depend on the specific value
+$x$ that was passed in.
+
+\begin{lstlisting}[style=haskell]
+-- In regular Haskell (without dependent types), polymorphic functions
+-- are a weak form of universal quantification:
+-- "forall a. a -> a" means "for all types a, we can prove a => a"
+identity :: forall a. a -> a
+identity x = x
+-- The 'forall a' is universal quantification over TYPES (not values)
+
+-- In a language with dependent types (Agda/Lean/Idris):
+-- "forall n : Nat. Vector a n -> n = length (toList ...)"
+-- Types can depend on VALUES (n is a value, not a type)
+
+-- Idris (dependently typed, Haskell-like syntax):
+-- vhead : {n : Nat} -> Vect (S n) a -> a
+-- This says: "for all n and a, given a vector of length (n+1),
+-- we can extract the first element"
+-- The type PROVES the vector is non-empty -- no runtime check needed!
+\end{lstlisting}
+
+Parametrically polymorphic functions in Haskell, Java generics, and C++
+templates are all weaker forms of universal quantification --- they quantify
+over types rather than values. Dependent types allow quantifying over values,
+which enables much stronger specifications.
+
+\subsection{Existential Quantification = Dependent Pairs}
+
+\[
+\exists x{:}A.\; P(x) \quad\longleftrightarrow\quad \Sigma x{:}A.\; P(x)
+\]
+
+In logic, $\exists x.\; P(x)$ means ``there exists an $x$ such that $P(x)$
+holds.'' A constructive proof of this is a specific witness $x$ together
+with a proof that $P(x)$ holds for that specific $x$.
+
+In type theory, $\Sigma x{:}A.\; P(x)$ (the dependent pair type) is a pair
+$(x, p)$ where $x : A$ is the witness and $p : P(x)$ is the proof that
+$P$ holds for that witness.
+
+\begin{example}[Existential Types as Dependent Pairs]
+The proposition ``there exists a natural number that is even'' corresponds to:
+\[
+\Sigma n{:}\Nat.\; \mathrm{IsEven}(n)
+\]
+A proof of this is a specific pair: the witness ($n = 2$, say) plus a proof
+that $2$ is even ($\mathrm{IsEven}(2)$).
+
+In Haskell with existential types (simulated):
+\begin{lstlisting}[style=haskell]
+-- A pair (n, proof) where proof witnesses that n is even
+-- (Using a type class as the proof predicate)
+data IsEven :: Nat -> Type where
+  ZeroIsEven :: IsEven 0
+  SsIsEven   :: IsEven n -> IsEven (n + 2)
+
+-- An existential: "there exists n such that IsEven n"
+data SomeEvenNat where
+  MkSomeEven :: forall n. IsEven n -> SomeEvenNat
+-- The 'n' is hidden (existentially quantified)
+-- but the PROOF that it is even is preserved
+
+-- Constructing a witness:
+twoIsEven :: SomeEvenNat
+twoIsEven = MkSomeEven (SsIsEven ZeroIsEven)
+-- Proves: exists n, IsEven n
+-- by providing witness n=2 and proof SsIsEven ZeroIsEven
+\end{lstlisting}
+\end{example}
+
+Existential types in Haskell (\code{forall a. (a, a -> String)}) are a
+weak form of $\Sigma$ types. They let you package a value with a proof
+that it satisfies some interface, while hiding the concrete type. This is
+the foundation of \textbf{abstract data types} and
+\textbf{module systems} in programming languages.
+
+% ----------------------------------------------------------------
+\section{Identity Types and Equality}
+% ----------------------------------------------------------------
+
+We have now covered the full Curry-Howard table. But the story does not
+end there. In dependent type theory, there is a remarkable construction
+that has no analog in simple type theory: the \textbf{identity type}.
+
+\begin{definition}
+For any type $A$ and any two values $x, y : A$, the \textbf{identity type}
+(or \textbf{propositional equality type}) $\mathrm{Id}_A(x, y)$ is a type
+whose inhabitants are \emph{proofs that $x$ equals $y$}.
+
+If $\mathrm{Id}_A(x, y)$ is inhabited, then $x$ and $y$ are provably equal.
+If it is empty, they are provably unequal (or equality is undecidable).
+\end{definition}
+
+The identity type encodes equality as a type. A proof of equality is a
+\emph{value} of an equality type. This is not definitional equality
+(the compiler reducing both sides to the same normal form) but
+\emph{propositional equality} --- a proof object you can carry around and
+use.
+
+The basic inhabitant of $\mathrm{Id}_A(x, x)$ is called \textbf{refl}
+(reflexivity):
+\[
+\mathrm{refl} : \mathrm{Id}_A(x, x)
+\]
+
+``$x$ equals $x$'' is always provable (and the proof is \code{refl}).
+But proving that $x$ equals $y$ for distinct $x$ and $y$ requires
+actual work.
+
+\begin{lstlisting}[style=haskell]
+-- In Agda (full dependent type system):
+-- refl : x = x    (the only way to prove x = x trivially)
+
+example1 : 2 + 2 = 4
+example1 = refl   -- 2+2 and 4 reduce to the same value, so refl works
+
+-- But:
+-- bad : 2 + 2 = 5
+-- bad = refl   -- TYPE ERROR: 4 /= 5, these don't reduce to the same thing
+
+-- Proving properties using equality:
+-- If x = y, and P(x) holds, then P(y) holds (substitution)
+subst : {A : Set} {P : A -> Set} {x y : A}
+      -> x = y -> P x -> P y
+subst refl px = px   -- if x=y is refl (i.e., x and y are the same),
+                     -- then P x = P y definitionally
+
+-- Symmetry of equality: if x = y then y = x
+sym : {A : Set} {x y : A} -> x = y -> y = x
+sym refl = refl
+
+-- Transitivity: if x = y and y = z then x = z
+trans : {A : Set} {x y z : A} -> x = y -> y = z -> x = z
+trans refl q = q
+\end{lstlisting}
+
+\begin{keyinsight}[Equality Is a Type, Not a Relation]
+In classical mathematics, equality is a relation: a predicate $x = y$ that
+is either true or false. In dependent type theory, equality is a
+\textbf{type}: $\mathrm{Id}_A(x,y)$. A proof of equality is a
+\textbf{value} of this type.
+
+This means equality can have multiple distinct proofs. Two things can be
+equal in more than one way. This seemingly strange observation is the
+starting point for \textbf{Homotopy Type Theory (HoTT)}, one of the most
+exciting developments in mathematics in the last two decades.
+\end{keyinsight}
+
+\subsection{A Glimpse of Homotopy Type Theory}
+
+In Homotopy Type Theory (HoTT), the identity type $\mathrm{Id}_A(x, y)$
+is interpreted geometrically: it is the type of \textbf{paths} from $x$ to
+$y$ in the ``space'' $A$.
+
+\begin{itemize}
+    \item \code{refl} is the constant path (staying at $x$).
+    \item If $p : \mathrm{Id}_A(x, y)$ and $q : \mathrm{Id}_A(y, z)$,
+          then their composition $p \cdot q : \mathrm{Id}_A(x, z)$ is
+          path concatenation.
+    \item The symmetry $\mathrm{sym}(p) : \mathrm{Id}_A(y, x)$ is
+          path reversal.
+\end{itemize}
+
+Types become topological spaces. Values become points. Proofs of equality
+become paths between points. Proofs of equality-of-equalities become paths
+between paths (homotopies). The infinite tower of identity types mirrors the
+infinite tower of homotopy groups in topology.
+
+Vladimir Voevodsky's \textbf{Univalence Axiom} (2006) states that equivalent
+types are equal as types: $A \simeq B \Rightarrow A \equiv B$. This single
+axiom connects type theory to abstract homotopy theory and foundations of
+mathematics in a way that shocked the mathematical community.
+
+HoTT is deep, recent (the main text was published in 2013), and still being
+actively researched. It is the current frontier of the Curry-Howard
+correspondence: types as spaces, programs as points, proofs as paths.
+
+% ----------------------------------------------------------------
+\section{Historical Context: Curry, Howard, and Beyond}
+% ----------------------------------------------------------------
+
+The correspondence bears two names, and understanding the history helps
+appreciate the magnitude of the discovery.
+
+\subsection{Haskell Curry: The First Glimpse (1934)}
+
+Haskell Brooks Curry (1900--1982) was a logician at Penn State who spent
+much of his career studying \textbf{combinatory logic} --- a way of encoding
+computation using a few primitive combinators (\textbf{S}, \textbf{K}, and
+\textbf{I}) rather than variables.
+
+In 1934, Curry noticed that the types of the fundamental combinators
+correspond to the axioms of Hilbert-style propositional logic:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Combinator} & \textbf{Type} & \textbf{Logical Axiom} \\
+\midrule
+\textbf{K} & $A \to B \to A$ & Weakening: ``A implies (B implies A)'' \\
+\textbf{S} & $(A \to B \to C) \to (A \to B) \to A \to C$ & Distribution \\
+\textbf{I} & $A \to A$ & Identity: ``A implies A'' \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Curry noted this as a curiosity. He did not fully develop it into a general
+correspondence. But the seed was planted.
+
+\subsection{William Howard: The Formalization (1969)}
+
+William Alvin Howard (born 1926) was a logician who, in 1969, wrote a
+detailed manuscript making the correspondence precise and general. He worked
+with the typed lambda calculus and \textbf{natural deduction} (a style of
+proof system due to Gerhard Gentzen), and showed that:
+
+\begin{itemize}
+    \item The typing rules of the simply typed lambda calculus are in
+          exact correspondence with the inference rules of intuitionistic
+          propositional logic in natural deduction style.
+    \item The computational operations (beta reduction, eta expansion)
+          correspond to proof simplification (cut elimination in logic).
+    \item The normalization theorem for the lambda calculus (every computation
+          terminates to a normal form) corresponds to the
+          \textbf{consistency} of the logic (no proof of $\bot$).
+\end{itemize}
+
+Howard's manuscript circulated as a preprint for over a decade before being
+officially published in 1980. By then it had already become enormously
+influential. The correspondence is named Curry-Howard in recognition of
+both contributions, though de Bruijn independently developed closely related
+ideas in his \textsc{Automath} project around the same time.
+
+\subsection{The Expanding Correspondence}
+
+Since Howard's formalization, the correspondence has been extended in every
+direction:
+
+\begin{itemize}
+    \item \textbf{Girard (1971--72)}: System F (polymorphic lambda calculus)
+          corresponds to second-order propositional logic. Universal
+          quantification over types corresponds to quantification over
+          propositions.
+    \item \textbf{Martin-L\"of (1975)}: Dependent type theory corresponds
+          to full intuitionistic predicate logic. This is the foundation
+          of Coq, Agda, and Lean.
+    \item \textbf{Griffin (1990)}: The \code{call/cc} control operator
+          corresponds to Peirce's law, a classical logic tautology. Thus
+          continuations ``add'' classical logic to a constructive system.
+    \item \textbf{Girard (1987)}: Linear logic (where each assumption must
+          be used exactly once) corresponds to linear type systems. Rust's
+          ownership and borrowing system is a practical realization of
+          linear logic.
+    \item \textbf{Davies and Pfenning (2001)}: Modal logic (which talks about
+          ``necessarily true'' and ``possibly true'' propositions) corresponds
+          to staged computation and metaprogramming.
+    \item \textbf{Voevodsky (2006--2009)}: Homotopy type theory connects
+          dependent type theory to homotopy theory and provides new
+          foundations for mathematics.
+\end{itemize}
+
+The Curry-Howard correspondence is a living, growing framework. Every few
+years, a new connection is discovered between some logic system and some
+programming language feature. The frontier has not been reached.
+
+% ----------------------------------------------------------------
+\section{Putting It All Together}
+% ----------------------------------------------------------------
+
+Let us take stock of the full picture we have built.
+
+You write a function. The function has a type. That type is a proposition.
+The function body is a proof. The type checker verifies the proof is valid.
+A compiling program is a collection of proven theorems.
+
+This is not poetry. It is mathematics.
+
+\begin{example}[Reading a Real Function as a Theorem]
+Consider this Haskell function:
+\begin{lstlisting}[style=haskell]
+-- Haskell
+curry :: ((a, b) -> c) -> a -> b -> c
+curry f a b = f (a, b)
+\end{lstlisting}
+
+Read as a logical theorem: ``If $A \wedge B \Rightarrow C$, then
+$A \Rightarrow (B \Rightarrow C)$.''
+
+In words: if knowing both $A$ and $B$ lets you conclude $C$, then knowing
+$A$ alone lets you conclude that knowing $B$ would let you conclude $C$.
+You can defer the use of $B$ to later.
+
+This theorem is called \textbf{currying} (named after Haskell Curry, whose
+name is all over this chapter!). It says that a function of two arguments
+is equivalent to a function that returns a function. In logic, it says
+that conjunction in the hypotheses can be replaced by nested implications.
+The program \emph{proves} this. The two are identical.
+
+Now look at the reverse:
+\begin{lstlisting}[style=haskell]
+uncurry :: (a -> b -> c) -> (a, b) -> c
+uncurry f (a, b) = f a b
+\end{lstlisting}
+Logical reading: ``If $A \Rightarrow (B \Rightarrow C)$, then
+$A \wedge B \Rightarrow C$.''
+
+Together, \code{curry} and \code{uncurry} prove that these two forms are
+logically equivalent. The two functions are an isomorphism of proofs.
+\end{example}
+
+\begin{example}[Reading Types as Theorems]
+Look at standard library function types and read them as theorems:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Type} & \textbf{Logical Reading} \\
+\midrule
+\code{id :: a -> a} & $A \Rightarrow A$ (identity) \\
+\code{const :: a -> b -> a} & $A \Rightarrow B \Rightarrow A$ (weakening) \\
+\code{fst :: (a, b) -> a} & $A \wedge B \Rightarrow A$ (and-elim left) \\
+\code{snd :: (a, b) -> b} & $A \wedge B \Rightarrow B$ (and-elim right) \\
+\code{Left :: a -> Either a b} & $A \Rightarrow A \vee B$ (or-intro left) \\
+\code{Right :: b -> Either a b} & $B \Rightarrow A \vee B$ (or-intro right) \\
+\code{either :: (a->c) -> (b->c) -> Either a b -> c} & $(A\!\Rightarrow\!C) \Rightarrow (B\!\Rightarrow\!C) \Rightarrow A\!\vee\!B \Rightarrow C$ \\
+\code{absurd :: Void -> a} & $\bot \Rightarrow A$ (ex falso) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every one of these is a theorem in propositional logic. Every one has been
+``proved'' by writing the corresponding Haskell function. The standard
+library is a library of theorems.
+\end{example}
+
+% ----------------------------------------------------------------
+\section{Exercises}
+% ----------------------------------------------------------------
+
+\begin{exercise}
+Identify the logical proposition that each of the following types corresponds
+to (treat type variables like proposition variables):
+
+\begin{enumerate}
+    \item \code{(a, b, c) -> a}
+    \item \code{Either a (a -> Void)}
+    \item \code{(a -> b) -> (a -> c) -> a -> (b, c)}
+    \item \code{((a -> Void) -> Void) -> a}
+    \item \code{Either (a, b) (a, c) -> (a, Either b c)}
+    \item \code{a -> b -> (a -> b -> c) -> c}
+    \item \code{(Either a b -> c) -> (a -> c, b -> c)}
+\end{enumerate}
+
+For each, decide: is the proposition a theorem of intuitionistic logic?
+Of classical logic? Or of neither?
+\end{exercise}
+
+\begin{exercise}
+For each of the following logical propositions, either write a Haskell
+function with the corresponding type, or explain why it is not constructively
+provable:
+
+\begin{enumerate}
+    \item $A \wedge B \Rightarrow B \wedge A$ (commutativity of conjunction)
+    \item $A \vee B \Rightarrow B \vee A$ (commutativity of disjunction)
+    \item $(A \wedge B \Rightarrow C) \Leftrightarrow (A \Rightarrow B \Rightarrow C)$
+    \item $\neg(A \vee B) \Leftrightarrow \neg A \wedge \neg B$ (De Morgan's law)
+    \item $\neg(A \wedge B) \Leftrightarrow \neg A \vee \neg B$ (the other De Morgan's law --- is this constructive?)
+    \item $A \vee \neg A$ (law of excluded middle)
+    \item $\neg\neg A \Rightarrow A$ (double negation elimination)
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+In C++, \code{static\_assert} enforces a proposition at compile time.
+Consider this code:
+
+\begin{lstlisting}[style=cpp]
+template<typename T, typename U>
+struct Implies {
+    static_assert(std::is_convertible_v<T, U>,
+        "T must be convertible to U");
+};
+\end{lstlisting}
+
+\begin{enumerate}
+    \item What logical proposition does \code{std::is\_convertible\_v<T,U>}
+          represent?
+    \item What does it mean for this \code{static\_assert} to succeed?
+          (Frame your answer in terms of Curry-Howard.)
+    \item How would you write a \code{static\_assert} that proves
+          ``if T is convertible to U and U is convertible to V,
+          then T is convertible to V''? (Hint: transitivity of implication.)
+    \item Can you write a \code{static\_assert} for the proposition
+          $\neg(T = U)$, i.e., that two types are distinct? Try it.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}
+The following Haskell type is uninhabited (you cannot write a value of this
+type in a sound system). Explain why, in terms of both type theory and logic:
+
+\begin{lstlisting}[style=haskell]
+-- Can you write a value of this type?
+impossible :: (a -> Void) -> a
+impossible = ???
+\end{lstlisting}
+
+What would having such a function mean logically? What classical axiom would
+it be equivalent to?
+\end{exercise}
+
+\begin{exercise}
+Consider the ``type-safe door'' example from Section 9.
+
+\begin{enumerate}
+    \item Write out the logical propositions that the type system is proving
+          (e.g., ``it is impossible for a door to be simultaneously open
+          and locked'').
+    \item How does the Curry-Howard correspondence explain WHY encoding
+          state machines in the type system gives you stronger guarantees
+          than runtime checks?
+    \item Think of another real-world domain (e.g., a TCP connection:
+          Closed, Listening, Established, Closing) and sketch a type-level
+          state machine for it. What illegal transitions does your type
+          system prevent?
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}[Challenging]
+The function \code{absurd :: Void -> a} (from \code{Data.Void} in Haskell)
+can never actually be called with a real argument.
+
+\begin{enumerate}
+    \item Explain why this function type-checks even though it has an
+          empty case expression (no pattern match cases).
+    \item In a proof assistant, this function is used as the
+          \emph{principle of explosion} (ex falso quodlibet). Explain
+          what this means.
+    \item If a function \code{f :: SomeType -> Void} type-checks and
+          terminates, what have you proven about \code{SomeType}?
+    \item Construct a type in C++ that is ``morally empty'' (cannot be
+          meaningfully constructed) using \code{= delete} constructors
+          and private destructor. What proposition does this type represent?
+\end{enumerate}
+\end{exercise}
+
+% ----------------------------------------------------------------
+\section{Summary}
+% ----------------------------------------------------------------
+
+This chapter has been the culmination of a long journey. We introduced
+types as classifiers in Chapter 1. We built product types, sum types,
+and function types over subsequent chapters. We studied polymorphism and
+type inference. And now we see that the entire structure we have been
+building was not just a useful programming tool --- it was a logic system
+in disguise.
+
+The Curry-Howard correspondence says:
+\begin{itemize}
+    \item A type is a proposition.
+    \item A value (program) is a proof.
+    \item A type with no values is a false proposition.
+    \item Function types encode implication.
+    \item Product types encode conjunction.
+    \item Sum types encode disjunction.
+    \item The empty type is the false proposition.
+    \item The unit type is the trivially true proposition.
+    \item Dependent function types encode universal quantification.
+    \item Dependent pair types encode existential quantification.
+    \item Identity types encode propositional equality.
+\end{itemize}
+
+The practical implications are immediate. Every time you design your types
+to make illegal states unrepresentable, you are encoding logical invariants
+as propositions and forcing the compiler to prove they hold. Every time
+\code{static\_assert} compiles, the compiler has checked a proof. Every
+pattern match that the compiler demands be exhaustive is a requirement that
+you handle all cases in a proof by disjunction.
+
+The theoretical implications are even deeper. The Curry-Howard correspondence
+transforms the question ``is this program correct?'' into the question ``is
+this theorem provable?'' It gives us proof assistants --- tools for
+constructing machine-verified mathematical proofs by writing programs. It
+connects the study of computation to the foundations of mathematics.
+
+And the correspondence keeps growing. Linear logic and linear types. Modal
+logic and staged computation. Classical logic and continuations. Homotopy
+type theory and the geometry of equality. Every extension of logic is a new
+programming language feature waiting to be discovered.
+
+\begin{takeaway}[Chapter 14: The Curry-Howard Correspondence]
+\begin{itemize}
+    \item \textbf{Types are propositions; programs are proofs.} This is the
+          Curry-Howard correspondence: a precise, mathematical isomorphism
+          between type theory and logic.
+
+    \item \textbf{The Rosetta Stone:} Implication $\Leftrightarrow$ Function
+          type. Conjunction $\Leftrightarrow$ Product type. Disjunction
+          $\Leftrightarrow$ Sum type. True $\Leftrightarrow$ Unit type.
+          False $\Leftrightarrow$ Empty type. $\forall$ $\Leftrightarrow$
+          $\Pi$-type. $\exists$ $\Leftrightarrow$ $\Sigma$-type.
+
+    \item \textbf{Modus ponens is function application.} Every function call
+          is an instance of the oldest rule of logical inference. Function
+          composition is proof transitivity.
+
+    \item \textbf{Exhaustive pattern matching is disjunction elimination.}
+          The compiler's demand that you handle every case is a
+          proof-theoretic correctness condition.
+
+    \item \textbf{Negation is $A \to \Void$.} To prove $\neg A$, write a
+          function from $A$ to the empty type. If such a function exists
+          and the system is sound, $A$ must be uninhabited.
+
+    \item \textbf{Curry-Howard gives constructive logic.} The law of excluded
+          middle ($A \vee \neg A$) and double negation elimination
+          ($\neg\neg A \Rightarrow A$) are not constructively provable.
+          Continuations correspond to classical logic.
+
+    \item \textbf{\code{static\_assert} is a proof obligation.} When it
+          compiles, the compiler has verified the proposition. Concepts and
+          type traits are propositions about types.
+
+    \item \textbf{Proof assistants (Coq, Agda, Lean) take this seriously.}
+          They have verified the Four Color Theorem, the Feit-Thompson
+          Theorem, CompCert (a verified C compiler), and seL4 (a verified
+          OS kernel).
+
+    \item \textbf{``Make illegal states unrepresentable'' is Curry-Howard
+          applied.} Encoding invariants in types means a compiling program
+          proves those invariants hold.
+
+    \item \textbf{Identity types encode equality.} In dependent type theory,
+          equality is a type; a proof of equality is a value. This leads to
+          Homotopy Type Theory, where types are spaces and proofs are paths.
+
+    \item \textbf{The correspondence keeps extending.} Linear logic $\leftrightarrow$
+          linear types (Rust). Modal logic $\leftrightarrow$ staged
+          computation. Homotopy type theory $\leftrightarrow$ spaces and paths.
+          The frontier has not been reached.
+\end{itemize}
+\end{takeaway}
